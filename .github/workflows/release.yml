@@ -1,0 +1,35 @@
+name: Release BTTInstrumentor
+
+on:
+  push:
+    tags:
+      - "*"
+
+jobs:
+  build-arm64:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build arm64
+        run: |
+          swift build -c release --product BTTInstrumentor --triple arm64-apple-macosx
+          strip -rSTX .build/arm64-apple-macosx/release/BTTInstrumentor
+          cp .build/arm64-apple-macosx/release/BTTInstrumentor BTTInstrumentor-arm64
+      - name: Upload
+        uses: softprops/action-gh-release@v1
+        with:
+          files: BTTInstrumentor-arm64
+
+  build-x86_64:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build x86_64
+        run: |
+          swift build -c release --product BTTInstrumentor --triple x86_64-apple-macosx
+          strip -rSTX .build/x86_64-apple-macosx/release/BTTInstrumentor
+          cp .build/x86_64-apple-macosx/release/BTTInstrumentor BTTInstrumentor-x86_64
+      - name: Upload
+        uses: softprops/action-gh-release@v1
+        with:
+          files: BTTInstrumentor-x86_64
