@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "BTTInstrumentor",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v13)], 
     products: [
         .executable(name: "BTTInstrumentor", targets: ["BTTInstrumentor"])
     ],
