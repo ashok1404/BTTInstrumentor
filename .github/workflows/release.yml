@@ -14,21 +14,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build arm64
+      - name: Build universal binary
         run: |
           swift build -c release --product BTTInstrumentor --triple arm64-apple-macosx
-          strip -rSTX .build/arm64-apple-macosx/release/BTTInstrumentor
-          cp .build/arm64-apple-macosx/release/BTTInstrumentor BTTInstrumentor-arm64
-
-      - name: Build x86_64
-        run: |
           swift build -c release --product BTTInstrumentor --triple x86_64-apple-macosx
-          strip -rSTX .build/x86_64-apple-macosx/release/BTTInstrumentor
-          cp .build/x86_64-apple-macosx/release/BTTInstrumentor BTTInstrumentor-x86_64
+          lipo -create -output BTTInstrumentor \
+            .build/arm64-apple-macosx/release/BTTInstrumentor \
+            .build/x86_64-apple-macosx/release/BTTInstrumentor
+          strip -rSTX BTTInstrumentor
 
       - name: Upload
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            BTTInstrumentor-arm64
-            BTTInstrumentor-x86_64
+          files: BTTInstrumentor
