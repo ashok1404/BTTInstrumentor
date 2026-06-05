@@ -15,10 +15,16 @@ final class BTTRewriter: SyntaxRewriter {
 
     // Source file level — add import BlueTriangle after import SwiftUI
     override func visit(_ node: SourceFileSyntax) -> SourceFileSyntax {
-        guard !node.statements.contains(where: { stmt in
+        // First let super visit all children (including structs)
+        let visited = super.visit(node)
+
+        // Then add import BlueTriangle if needed
+        guard injectedCount > 0 else { return visited }
+
+        guard !visited.statements.contains(where: { stmt in
             guard let d = stmt.item.as(ImportDeclSyntax.self) else { return false }
             return d.path.trimmedDescription == "BlueTriangle"
-        }) else { return node }
+        }) else { return visited }
 
         let bttImport = ImportDeclSyntax(
             leadingTrivia: .newline,
@@ -28,17 +34,17 @@ final class BTTRewriter: SyntaxRewriter {
             ])
         )
 
-        var statements = Array(node.statements)
+        var statements = Array(visited.statements)
         guard let swiftUIInt = statements.firstIndex(where: { stmt in
             guard let d = stmt.item.as(ImportDeclSyntax.self) else { return false }
             return d.path.trimmedDescription == "SwiftUI"
-        }) else { return node }
+        }) else { return visited }
 
         statements.insert(
             CodeBlockItemSyntax(item: .decl(DeclSyntax(bttImport))),
             at: swiftUIInt + 1
         )
-        return node.with(\.statements, CodeBlockItemListSyntax(statements))
+        return visited.with(\.statements, CodeBlockItemListSyntax(statements))
     }
 
     // Struct level — add @BTTTrack above View structs

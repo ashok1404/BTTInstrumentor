@@ -5,6 +5,7 @@
 //  Created by Ashok Singh on 04/06/26.
 //
 
+#if os(macOS)
 import Foundation
 import SwiftSyntax
 import SwiftParser
@@ -22,3 +23,4 @@ func injectFile(_ path: String) -> Bool {
     try? result.write(toFile: path, atomically: true, encoding: .utf8)
     return true
 }
+#endif

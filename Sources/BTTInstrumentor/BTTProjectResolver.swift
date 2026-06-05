@@ -1,11 +1,11 @@
 //
-//  ProjectResolve.swift
+//  BTTProjectResolver.swift
 //  BTTInstrumentor
 //
 //  Created by Ashok Singh on 04/06/26.
 //
 
-
+#if os(macOS)
 import Foundation
 import PathKit
 import XcodeProj
@@ -49,7 +49,32 @@ func getAllSchemes(from projPath: String) -> [String] {
     parseSection("Schemes", from: xcodebuildList(projPath: projPath)).sorted()
 }
 
+/// Returns all resolved package names (local + remote)
+/// Parses "Resolved source packages:" section from xcodebuild -list
+/// Returns only app-level schemes by reading xcshareddata/xcschemes
+/// then filtering out any that match local package names
+func getAppSchemes(from projPath: String) -> [String] {
+    // Get schemes from xcshareddata — developer created
+    let schemesDir = (projPath as NSString).appendingPathComponent("xcshareddata/xcschemes")
+    let sharedSchemes: [String]
+    if let files = try? fm.contentsOfDirectory(atPath: schemesDir) {
+        sharedSchemes = files
+            .filter { $0.hasSuffix(".xcscheme") }
+            .map { ($0 as NSString).deletingPathExtension }
+            .sorted()
+    } else {
+        sharedSchemes = getAllSchemes(from: projPath)
+    }
+
+    // Get all local package names to exclude
+    let localPackages = resolveAllPackages(projPath: projPath)
+
+    // Filter out schemes that match a local package name
+    return sharedSchemes.filter { !localPackages.keys.contains($0) }
+}
+
 // MARK: - Source files
+
 func getSourceFiles(for targetName: String, in projPath: String) -> [String] {
     guard let xcodeproj = try? XcodeProj(path: Path(projPath)),
           let target = xcodeproj.pbxproj.nativeTargets.first(where: { $0.name == targetName }),
@@ -61,6 +86,25 @@ func getSourceFiles(for targetName: String, in projPath: String) -> [String] {
         let fullPath = (try? file.fullPath(sourceRoot: projDir)) ?? (projDir + Path(path))
         return fm.fileExists(atPath: fullPath.string) ? fullPath.string : nil
     }
+}
+
+/// Get local package paths that a specific target depends on via XcodeProj
+func getLocalPackagesForTarget(_ targetName: String, in projPath: String) -> [String] {
+    guard let xcodeproj = try? XcodeProj(path: Path(projPath)),
+          let target = xcodeproj.pbxproj.nativeTargets.first(where: { $0.name == targetName })
+    else { return [] }
+
+    let allPackages = resolveAllPackages(projPath: projPath)
+    let depNames = (target.packageProductDependencies ?? []).compactMap { $0.productName }
+
+    var paths: [String] = []
+    var seen = Set<String>()
+    for dep in depNames {
+        if let path = allPackages[dep] ?? allPackages.first(where: { dep.hasPrefix($0.key) })?.value {
+            if !seen.contains(path) { seen.insert(path); paths.append(path) }
+        }
+    }
+    return paths
 }
 
 func findAllSwiftFiles(in root: String) -> [String] {
@@ -92,15 +136,24 @@ func findXcodeprojFiles(in root: String) -> [String] {
     return results
 }
 
-func resolveAllLocalPackages(projPath: String) -> [String: String] {
+/// Returns local package names and their paths [name: path]
+func resolveAllPackages(projPath: String) -> [String: String] {
     let output = xcodebuildList(projPath: projPath)
     var packages: [String: String] = [:]
+    var inSection = false
+
     for line in output.components(separatedBy: "\n") {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
-        let parts = trimmed.components(separatedBy: ": ")
-        guard parts.count == 2 else { continue }
-        let name = parts[0].trimmingCharacters(in: .whitespaces)
-        let path = parts[1].trimmingCharacters(in: .whitespaces)
+
+        if trimmed == "Resolved source packages:" { inSection = true; continue }
+        if trimmed.hasPrefix("Information about project") { break }
+        guard inSection, !trimmed.isEmpty else { continue }
+
+        guard let range = trimmed.range(of: ": ") else { continue }
+        let name = String(trimmed[trimmed.startIndex..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+        let path = String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+
+        // Only local paths
         guard path.hasPrefix("/") else { continue }
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { continue }
@@ -109,15 +162,15 @@ func resolveAllLocalPackages(projPath: String) -> [String: String] {
     return packages
 }
 
-// MARK: - Make selection
+// MARK: - Interactive selection
 func select(from options: [String], prompt: String, allLabel: String) -> [String] {
-    print("\n\(prompt)\n")
+    BTTLog.plain("\n\(prompt)\n")
     for (i, opt) in options.enumerated() {
-        print("\(i + 1). \(opt)")
+        BTTLog.plain("\(i + 1). \(opt)")
     }
     BTTLog.info("\(options.count + 1). \(allLabel)")
-    BTTLog.info("\nEnter the number of the \(prompt.lowercased().contains("target") ? "target" : "scheme") to instrument: ")
-    
+    BTTLog.prompt("\nEnter the number of the \(prompt.lowercased().contains("target") ? "target" : "scheme") to instrument: ")
+
     if let input = readLine()?.trimmingCharacters(in: .whitespaces),
        let idx = Int(input) {
         if idx == options.count + 1 { return options }
@@ -126,93 +179,60 @@ func select(from options: [String], prompt: String, allLabel: String) -> [String
     return [options[0]]
 }
 
-// MARK: - Resolve files
+// MARK: - Resolve xcodeproj only
 
-func resolveFiles(args: BTTArgs) -> [String] {
-    let root = args.rootPath
-    var xcodeproj: String
+func resolveXcodeproj(args: BTTArgs) -> String? {
+    if let p = args.projectPath, fm.fileExists(atPath: p) { return p }
+    let found = findXcodeprojFiles(in: args.rootPath)
+    if found.count == 1 { return found[0] }
+    if found.isEmpty { return nil }
+    let names = found.map { ($0 as NSString).lastPathComponent }
+    let sel = select(from: names, prompt: "Multiple projects found:", allLabel: "all projects")
+    return found.first { ($0 as NSString).lastPathComponent == sel[0] }
+}
 
-    let found = findXcodeprojFiles(in: root)
+// MARK: - Resolve target then scheme (scheme list filtered after target selected)
 
-    if let p = args.projectPath, fm.fileExists(atPath: p) {
-        xcodeproj = p
-    } else if found.isEmpty {
-        return findAllSwiftFiles(in: root)
-    } else if found.count == 1 {
-        xcodeproj = found[0]
-    } else {
-        let names = found.map { ($0 as NSString).lastPathComponent }
-        let sel = select(from: names, prompt: "Multiple projects found:", allLabel: "all projects")
-        xcodeproj = found.first { ($0 as NSString).lastPathComponent == sel[0] } ?? found[0]
-    }
+func resolveTargetAndScheme(args: BTTArgs, xcodeprojPath: String) -> (target: String, scheme: String?) {
 
-    BTTLog.info("Project: \((xcodeproj as NSString).lastPathComponent)")
-
-    let targets = getTargets(from: xcodeproj)
-    var selectedTargets: [String] = []
+    // Step 1 — Select target first
+    let targets = getTargets(from: xcodeprojPath)
+    var selectedTarget: String
 
     if let t = args.target {
-        selectedTargets = [t]
+        selectedTarget = t
         BTTLog.info("Target: \(t)")
     } else if targets.isEmpty {
-        return findAllSwiftFiles(in: (xcodeproj as NSString).deletingLastPathComponent)
+        selectedTarget = ""
     } else {
-        BTTLog.info("\nFetching targets for \((xcodeproj as NSString).lastPathComponent)...")
-        selectedTargets = select(
+        BTTLog.info("Fetching targets for \((xcodeprojPath as NSString).lastPathComponent)...")
+        let sel = select(
             from: targets,
             prompt: "Which target do you want to instrument?",
             allLabel: "all targets"
         )
+        selectedTarget = sel.first ?? targets[0]
     }
 
+    // Step 2 — Select scheme
+    // Only show app-level schemes (packages are hidden — they are dependencies)
+    let appSchemes = getAppSchemes(from: xcodeprojPath)
     var selectedScheme: String? = args.scheme
-    let allSchemes = getAllSchemes(from: xcodeproj)
 
-    if selectedScheme == nil && !allSchemes.isEmpty {
-        BTTLog.info("\nFetching all available schemes for \((xcodeproj as NSString).lastPathComponent)...")
+    if selectedScheme == nil && !appSchemes.isEmpty {
+        BTTLog.info("Fetching all available schemes for \((xcodeprojPath as NSString).lastPathComponent)...")
         let sel = select(
-            from: allSchemes,
+            from: appSchemes,
             prompt: "Which scheme do you want to instrument?",
             allLabel: "all schemes"
         )
+        // nil means all schemes selected
         selectedScheme = sel.count == 1 ? sel[0] : nil
-        if let s = selectedScheme { print("Scheme: \(s)") }
+        if let s = selectedScheme { BTTLog.info("Scheme: \(s)") }
+        else { BTTLog.info("Instrumenting all schemes") }
     }
 
-    var allFiles: [String] = []
-    var seen = Set<String>()
-
-    func addFiles(_ files: [String]) {
-        for f in files where !seen.contains(f) { seen.insert(f); allFiles.append(f) }
-    }
-
-    if let scheme = selectedScheme {
-        if targets.contains(scheme) {
-            addFiles(getSourceFiles(for: scheme, in: xcodeproj))
-        } else {
-            let packages = resolveAllLocalPackages(projPath: xcodeproj)
-            if let pkgPath = packages[scheme] {
-                BTTLog.info("Package path: \(pkgPath)")
-                addFiles(findAllSwiftFiles(in: pkgPath))
-            } else {
-                BTTLog.error("Error: '\(scheme)' is a remote package — cannot inject source files.")
-                exit(1)
-            }
-        }
-    } else {
-        for target in selectedTargets {
-            addFiles(getSourceFiles(for: target, in: xcodeproj))
-        }
-        for (_, path) in resolveAllLocalPackages(projPath: xcodeproj) {
-            addFiles(findAllSwiftFiles(in: path))
-        }
-    }
-
-    if allFiles.isEmpty {
-        BTTLog.error("Error: No Swift files found for the selected target/scheme.")
-        exit(1)
-    }
-
-    BTTLog.info("Files to process: \(allFiles.count)")
-    return allFiles
+    return (selectedTarget, selectedScheme)
 }
+
+#endif

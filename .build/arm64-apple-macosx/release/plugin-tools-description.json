@@ -170,6 +170,30 @@
       "inputs" : [
         {
           "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTArgs.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTBuildPhase.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTInjector.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTLog.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTProjectResolver.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTRewriter.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/main.swift"
         },
         {
@@ -201,6 +225,12 @@
       "moduleName" : "BTTInstrumentor",
       "moduleOutputPath" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/Modules/BTTInstrumentor.swiftmodule",
       "objects" : [
+        "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTArgs.swift.o",
+        "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTBuildPhase.swift.o",
+        "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTInjector.swift.o",
+        "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTLog.swift.o",
+        "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTProjectResolver.swift.o",
+        "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTRewriter.swift.o",
         "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/main.swift.o"
       ],
       "otherArguments" : [
@@ -260,6 +290,30 @@
       "outputs" : [
         {
           "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTArgs.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTBuildPhase.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTInjector.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTLog.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTProjectResolver.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTRewriter.swift.o"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/main.swift.o"
         },
         {
@@ -269,6 +323,12 @@
       ],
       "prepareForIndexing" : false,
       "sources" : [
+        "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTArgs.swift",
+        "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTBuildPhase.swift",
+        "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTInjector.swift",
+        "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTLog.swift",
+        "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTProjectResolver.swift",
+        "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTRewriter.swift",
         "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/main.swift"
       ],
       "tempsPath" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build",
@@ -5198,6 +5258,12 @@
       "-package-name",
       "bttinstrumentor",
       "-c",
+      "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTArgs.swift",
+      "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTBuildPhase.swift",
+      "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTInjector.swift",
+      "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTLog.swift",
+      "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTProjectResolver.swift",
+      "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTRewriter.swift",
       "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/main.swift",
       "-I",
       "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/Modules",
@@ -6908,6 +6974,30 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTArgs.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTBuildPhase.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTInjector.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTLog.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTProjectResolver.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTRewriter.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/main.swift"
         }
       ],
@@ -6943,6 +7033,30 @@
         {
           "kind" : "file",
           "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/AEXML.build/Parser.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTArgs.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTBuildPhase.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTInjector.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTLog.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTProjectResolver.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTRewriter.swift.o"
         },
         {
           "kind" : "file",
