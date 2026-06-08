@@ -8,112 +8,173 @@
 #if os(macOS)
 import Foundation
 
-// MARK: - Ruby script — adds phase to specific target only
-private let rubyScript = """
-require 'xcodeproj'
-proj_path    = ARGV[0]
-phase_name   = ARGV[1]
-phase_script = ARGV[2]
-target_name  = ARGV[3]
-project  = Xcodeproj::Project.open(proj_path)
-modified = false
-project.targets.each do |target|
-  next unless target.is_a?(Xcodeproj::Project::Object::PBXNativeTarget)
-  next unless target.product_type == "com.apple.product-type.application"
-  next unless target_name.empty? || target.name == target_name
-  existing = target.build_phases.find { |p| p.display_name == phase_name }
-  if existing
-    if existing.shell_script != phase_script
-      existing.shell_script = phase_script
-      puts "Updated build phase in #{target.name}"
-      modified = true
-    else
-      puts "Build phase already up to date in #{target.name}"
-    end
-    next
-  end
-  phase = target.new_shell_script_build_phase(phase_name)
-  phase.shell_script         = phase_script
-  phase.show_env_vars_in_log = "0"
-  compile_idx = target.build_phases.index { |p|
-    p.is_a?(Xcodeproj::Project::Object::PBXSourcesBuildPhase)
-  }
-  target.build_phases.move(phase, compile_idx || 0)
-  puts "Added build phase to #{target.name}"
-  modified = true
-end
-project.save if modified
+// MARK: - Script
+
+private func buildScript() -> String {
 """
-
-// MARK: - Build script content
-// scheme = nil  → all schemes selected → inject target files + ALL local package dependencies
-// scheme = "XYZ" → specific scheme → inject only that scheme/target files
-
-private func buildScript(scheme: String?) -> String {
-    // If nil — no --scheme flag — cmdInject will inject target + all its package deps
-    let schemeArg = scheme.map { "--scheme \"\($0)\"" } ?? ""
-    return """
 export PATH="$PATH:/usr/local/bin"
 export PATH="$PATH:/opt/homebrew/bin"
 
 if [[ -x "$SRCROOT/.btt/BTTInstrumentor" ]]
 then
     instrumentorExecutable="$SRCROOT/.btt/BTTInstrumentor"
-    echo "using local BlueTriangle instrumentor in: $instrumentorExecutable"
 elif [[ -x "$(command -v BTTInstrumentor)" ]]
 then
     instrumentorExecutable="$(command -v BTTInstrumentor)"
-    echo "using system BlueTriangle instrumentor in: $instrumentorExecutable"
 else
-    echo "error: No BTTInstrumentor found. Install via: brew install bluetriangle/tools/bttinstrumentor"
+    echo "error: BTTInstrumentor not found. Run: brew install bttinstrumentor"
     exit 1
 fi
 
-"$instrumentorExecutable" install "$SRCROOT" --target "$TARGET_NAME" \(schemeArg)
+"$instrumentorExecutable" install "$SRCROOT"
 exit $?
 """
 }
 
-// MARK: - Add build phase to specific target
+// MARK: - Add pre-action
+// Only adds to schemes that build the selected target
+// Skips if pre-action already exists
 
-func addBuildPhase(xcodeprojPath: String, targetName: String, scheme: String?) {
-    ensureXcodeprojGem()
+func addBuildPhase(xcodeprojPath: String, targetName: String) {
+    let schemesDir = (xcodeprojPath as NSString).appendingPathComponent("xcshareddata/xcschemes")
+    guard let schemeFiles = try? FileManager.default.contentsOfDirectory(atPath: schemesDir) else {
+        BTTLog.error("No schemes found at \(schemesDir)")
+        return
+    }
 
-    let script = buildScript(scheme: scheme)
-    let tmp = NSTemporaryDirectory() + "btt_phase.rb"
-    try? rubyScript.write(toFile: tmp, atomically: true, encoding: .utf8)
+    let projName = ((xcodeprojPath as NSString).lastPathComponent as NSString).deletingPathExtension
+    let script   = buildScript()
 
-    let task = Process()
-    task.launchPath = "/usr/bin/ruby"
-    task.arguments = [tmp, xcodeprojPath, "BTT Instrumentation", script, targetName]
-    try? task.run()
-    task.waitUntilExit()
-    try? FileManager.default.removeItem(atPath: tmp)
+    for schemeFile in schemeFiles where schemeFile.hasSuffix(".xcscheme") {
+        let schemePath = (schemesDir as NSString).appendingPathComponent(schemeFile)
+        guard var content = try? String(contentsOfFile: schemePath, encoding: .utf8) else { continue }
 
-    BTTLog.success("Build phase added to target: \(targetName)")
+        // Only schemes that build this target
+        guard content.contains("BlueprintName = \"\(targetName)\"") else { continue }
+
+        // Skip — already has BTT pre-action
+        if content.contains("BTT Instrumentation") { continue }
+
+        let blueprintID = extractBlueprintID(from: content, targetName: targetName) ?? ""
+        let escapedScript = script
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\n", with: "&#10;") + "&#10;"
+
+        let action =
+            "         <ExecutionAction\n" +
+            "            ActionType = \"Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction\">\n" +
+            "            <ActionContent\n" +
+            "               title = \"BTT Instrumentation\"\n" +
+            "               scriptText = \"\(escapedScript)\">\n" +
+            "               <EnvironmentBuildable>\n" +
+            "                  <BuildableReference\n" +
+            "                     BuildableIdentifier = \"primary\"\n" +
+            "                     BlueprintIdentifier = \"\(blueprintID)\"\n" +
+            "                     BuildableName = \"\(targetName).app\"\n" +
+            "                     BlueprintName = \"\(targetName)\"\n" +
+            "                     ReferencedContainer = \"container:\(projName).xcodeproj\">\n" +
+            "                  </BuildableReference>\n" +
+            "               </EnvironmentBuildable>\n" +
+            "            </ActionContent>\n" +
+            "         </ExecutionAction>\n"
+
+        // Insert inside existing PreActions or create new block
+        if content.contains("      </PreActions>") {
+            content = content.replacingOccurrences(of: "      </PreActions>", with: action + "      </PreActions>")
+        } else if let range = content.range(of: "</PreActions>") {
+            content.insert(contentsOf: action, at: range.lowerBound)
+        } else {
+            let block = "      <PreActions>\n" + action + "      </PreActions>\n"
+            content = content.replacingOccurrences(of: "      <BuildActionEntries>", with: block + "      <BuildActionEntries>")
+        }
+
+        try? content.write(toFile: schemePath, atomically: true, encoding: .utf8)
+    }
 }
 
-// MARK: - Gem helper
-private func ensureXcodeprojGem() {
-    let check = Process()
-    check.launchPath = "/usr/bin/gem"
-    check.arguments = ["list", "xcodeproj", "-i"]
-    let pipe = Pipe()
-    check.standardOutput = pipe
-    check.standardError = Pipe()
-    try? check.run()
-    check.waitUntilExit()
+// MARK: - Remove pre-action
+// target = nil removes ALL BTT pre-actions (full clean up)
+// target = "Xpo" removes only the pre-action for that target
 
-    let installed = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-        .trimmingCharacters(in: .whitespacesAndNewlines) == "true"
-    guard !installed else { return }
+func removePreActions(for target: String?, in xcodeprojPath: String, keepTargets: [String] = []) {
+    let schemesDir = (xcodeprojPath as NSString).appendingPathComponent("xcshareddata/xcschemes")
+    guard let schemeFiles = try? FileManager.default.contentsOfDirectory(atPath: schemesDir) else { return }
 
-    BTTLog.info("Installing xcodeproj gem...")
-    let install = Process()
-    install.launchPath = "/usr/bin/gem"
-    install.arguments = ["install", "xcodeproj", "--silent"]
-    try? install.run()
-    install.waitUntilExit()
+    for schemeFile in schemeFiles where schemeFile.hasSuffix(".xcscheme") {
+        let schemePath = (schemesDir as NSString).appendingPathComponent(schemeFile)
+        guard var content = try? String(contentsOfFile: schemePath, encoding: .utf8) else { continue }
+        guard content.contains("BTT Instrumentation") else { continue }
+
+        if let target = target {
+            // Only remove from schemes that build this target
+            guard content.contains("BlueprintName = \"\(target)\"") else { continue }
+
+            // If another instrumented target also uses this scheme — keep the pre-action
+            let schemeAlsoBuilds = keepTargets.filter { content.contains("BlueprintName = \"\($0)\"") }
+            if !schemeAlsoBuilds.isEmpty {
+                BTTLog.info("Keeping pre-action in '\((schemeFile as NSString).deletingPathExtension)' — still used by: \(schemeAlsoBuilds.joined(separator: ", "))")
+                continue
+            }
+        }
+
+        content = removeBTTAction(from: content)
+        content = removeEmptyPreActions(from: content)
+        try? content.write(toFile: schemePath, atomically: true, encoding: .utf8)
+    }
+}
+
+/// Removes the BTT Instrumentation ExecutionAction XML block
+private func removeBTTAction(from content: String) -> String {
+    let startMarker = "         <ExecutionAction"
+    let titleMarker = "title = \"BTT Instrumentation\""
+    let endMarker   = "         </ExecutionAction>"
+
+    var lines = content.components(separatedBy: "\n")
+    var i     = 0
+    while i < lines.count {
+        if lines[i].contains(startMarker) {
+            let lookahead = min(i + 5, lines.count - 1)
+            let block     = lines[i...lookahead].joined(separator: "\n")
+            if block.contains(titleMarker) {
+                var j = i
+                while j < lines.count {
+                    if lines[j].contains(endMarker) {
+                        lines.removeSubrange(i...j)
+                        break
+                    }
+                    j += 1
+                }
+                continue
+            }
+        }
+        i += 1
+    }
+    return lines.joined(separator: "\n")
+}
+
+/// Removes <PreActions></PreActions> if it contains no ExecutionAction children
+private func removeEmptyPreActions(from content: String) -> String {
+    // Match empty PreActions block — only whitespace between open and close tags
+    let pattern = "\\s*<PreActions>\\s*</PreActions>"
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return content }
+    let range  = NSRange(content.startIndex..., in: content)
+    return regex.stringByReplacingMatches(in: content, range: range, withTemplate: "")
+}
+
+private func extractBlueprintID(from content: String, targetName: String) -> String? {
+    let lines = content.components(separatedBy: "\n")
+    for (i, line) in lines.enumerated() {
+        guard line.contains("BlueprintName = \"\(targetName)\"") else { continue }
+        for j in stride(from: i, through: max(0, i - 5), by: -1) {
+            guard lines[j].contains("BlueprintIdentifier") else { continue }
+            let parts = lines[j].components(separatedBy: "\"")
+            if parts.count >= 2 { return parts[1] }
+        }
+    }
+    return nil
 }
 
 #endif

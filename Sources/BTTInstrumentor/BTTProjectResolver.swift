@@ -12,227 +12,156 @@ import XcodeProj
 
 let fm = FileManager.default
 
-// MARK: - xcodebuild
-func xcodebuildList(projPath: String) -> String {
-    let task = Process()
-    task.launchPath = "/usr/bin/xcrun"
-    task.arguments = ["xcodebuild", "-list", "-project", projPath]
-    let pipe = Pipe()
-    task.standardOutput = pipe
-    task.standardError = Pipe()
-    try? task.run()
-    task.waitUntilExit()
-    return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+// MARK: - Xcodeproj
+
+/// Finds .xcodeproj from args path or by searching rootPath up to 4 levels deep
+func resolveXcodeproj(args: BTTArgs) -> String? {
+    if let p = args.projectPath, fm.fileExists(atPath: p) { return p }
+    guard let enumerator = fm.enumerator(
+        at: URL(fileURLWithPath: args.rootPath),
+        includingPropertiesForKeys: [.isDirectoryKey],
+        options: [.skipsHiddenFiles]
+    ) else { return nil }
+    for case let url as URL in enumerator {
+        let depth = url.pathComponents.count - URL(fileURLWithPath: args.rootPath).pathComponents.count
+        if depth > 4 { enumerator.skipDescendants(); continue }
+        if url.pathExtension == "xcodeproj" { return url.path }
+    }
+    return nil
 }
 
-func parseSection(_ section: String, from output: String) -> [String] {
-    var results: [String] = []
-    var seen = Set<String>()
+// MARK: - Targets
+/// Returns all targets listed under the "Targets:" section in xcodebuild -list
+func getTargets(in xcodeprojPath: String) -> [String] {
+    var targets   = [String]()
+    var seen      = Set<String>()
     var inSection = false
-    for line in output.components(separatedBy: "\n") {
+    for line in runXcodebuildList(for: xcodeprojPath).components(separatedBy: "\n") {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
-        if trimmed == "\(section):" { inSection = true; continue }
-        if inSection {
-            if trimmed.isEmpty { continue }
-            if trimmed.hasSuffix(":") { break }
-            if !seen.contains(trimmed) { seen.insert(trimmed); results.append(trimmed) }
+        if trimmed == "Targets:"  { inSection = true; continue }
+        guard inSection            else { continue }
+        if trimmed.isEmpty         { continue }
+        if trimmed.hasSuffix(":")  { break }
+        if seen.insert(trimmed).inserted { targets.append(trimmed) }
+    }
+    return targets
+}
+
+// MARK: - Swift files for a target
+
+/// Returns all Swift files for a target by merging three sources:
+/// 1. File references declared in xcodeproj (most projects)
+/// 2. Files from local SPM package dependencies of the target
+/// 3. Folder scan fallback — used when target uses a folder reference instead of file refs
+func getSwiftFiles(for target: String, in xcodeprojPath: String) -> [String] {
+    var files = [String]()
+    var seen  = Set<String>()
+
+    // Helper — adds only unique paths
+    func add(_ incoming: [String]) { incoming.filter { seen.insert($0).inserted }.forEach { files.append($0) } }
+
+    // 1. File references from xcodeproj
+    add(sourceFileRefs(for: target, in: xcodeprojPath))
+    // 2. Swift files from local package dependencies
+    add(localPackageFiles(for: target, in: xcodeprojPath))
+    // 3. Folder reference fallback — scan folder named after target
+    if files.isEmpty {
+        let projDir    = Path(xcodeprojPath).parent().string
+        let targetFolder = (projDir as NSString).appendingPathComponent(target)
+        if fm.fileExists(atPath: targetFolder) {
+            add(scanSwiftFiles(in: targetFolder))
         }
     }
-    return results
+
+    return files
 }
 
-func getTargets(from projPath: String) -> [String] {
-    parseSection("Targets", from: xcodebuildList(projPath: projPath))
-}
+// MARK: - Private
+/// Reads Swift file paths declared as file references for a target in xcodeproj
+private func sourceFileRefs(for target: String, in xcodeprojPath: String) -> [String] {
+    let projDir = Path(xcodeprojPath).parent()
+    guard let proj    = try? XcodeProj(path: Path(xcodeprojPath)),
+          let native  = proj.pbxproj.nativeTargets.first(where: { $0.name == target }),
+          let sources = try? native.sourceFiles()
+    else { return [] }
 
-func getAllSchemes(from projPath: String) -> [String] {
-    parseSection("Schemes", from: xcodebuildList(projPath: projPath)).sorted()
-}
-
-/// Returns all resolved package names (local + remote)
-/// Parses "Resolved source packages:" section from xcodebuild -list
-/// Returns only app-level schemes by reading xcshareddata/xcschemes
-/// then filtering out any that match local package names
-func getAppSchemes(from projPath: String) -> [String] {
-    // Get schemes from xcshareddata — developer created
-    let schemesDir = (projPath as NSString).appendingPathComponent("xcshareddata/xcschemes")
-    let sharedSchemes: [String]
-    if let files = try? fm.contentsOfDirectory(atPath: schemesDir) {
-        sharedSchemes = files
-            .filter { $0.hasSuffix(".xcscheme") }
-            .map { ($0 as NSString).deletingPathExtension }
-            .sorted()
-    } else {
-        sharedSchemes = getAllSchemes(from: projPath)
-    }
-
-    // Get all local package names to exclude
-    let localPackages = resolveAllPackages(projPath: projPath)
-
-    // Filter out schemes that match a local package name
-    return sharedSchemes.filter { !localPackages.keys.contains($0) }
-}
-
-// MARK: - Source files
-
-func getSourceFiles(for targetName: String, in projPath: String) -> [String] {
-    guard let xcodeproj = try? XcodeProj(path: Path(projPath)),
-          let target = xcodeproj.pbxproj.nativeTargets.first(where: { $0.name == targetName }),
-          let sourceFiles = try? target.sourceFiles() else { return [] }
-
-    let projDir = Path(projPath).parent()
-    return sourceFiles.compactMap { file -> String? in
-        guard let path = file.path, path.hasSuffix(".swift") else { return nil }
-        let fullPath = (try? file.fullPath(sourceRoot: projDir)) ?? (projDir + Path(path))
+    return sources.compactMap { ref -> String? in
+        guard let relativePath = ref.path, relativePath.hasSuffix(".swift") else { return nil }
+        let fullPath = (try? ref.fullPath(sourceRoot: projDir)) ?? (projDir + Path(relativePath))
         return fm.fileExists(atPath: fullPath.string) ? fullPath.string : nil
     }
 }
 
-/// Get local package paths that a specific target depends on via XcodeProj
-func getLocalPackagesForTarget(_ targetName: String, in projPath: String) -> [String] {
-    guard let xcodeproj = try? XcodeProj(path: Path(projPath)),
-          let target = xcodeproj.pbxproj.nativeTargets.first(where: { $0.name == targetName })
+/// Resolves local SPM package dependencies for a target and returns all their Swift files
+private func localPackageFiles(for target: String, in xcodeprojPath: String) -> [String] {
+    guard let proj   = try? XcodeProj(path: Path(xcodeprojPath)),
+          let native = proj.pbxproj.nativeTargets.first(where: { $0.name == target })
     else { return [] }
 
-    let allPackages = resolveAllPackages(projPath: projPath)
-    let depNames = (target.packageProductDependencies ?? []).compactMap { $0.productName }
+    let packagePathMap  = resolvedLocalPackages(for: xcodeprojPath)
+    let dependencyNames = (native.packageProductDependencies ?? []).compactMap { $0.productName }
 
-    var paths: [String] = []
-    var seen = Set<String>()
-    for dep in depNames {
-        if let path = allPackages[dep] ?? allPackages.first(where: { dep.hasPrefix($0.key) })?.value {
-            if !seen.contains(path) { seen.insert(path); paths.append(path) }
+    var visitedPaths = Set<String>()
+    return dependencyNames
+        .compactMap { name in
+            // Match by exact name or prefix (handles sub-product names)
+            packagePathMap[name] ?? packagePathMap.first(where: { name.hasPrefix($0.key) })?.value
         }
-    }
-    return paths
+        .filter { visitedPaths.insert($0).inserted }
+        .flatMap { scanSwiftFiles(in: $0) }
 }
 
-func findAllSwiftFiles(in root: String) -> [String] {
-    var files: [String] = []
-    guard let e = fm.enumerator(at: URL(fileURLWithPath: root),
+/// Parses "Resolved source packages:" from xcodebuild -list — returns [packageName: localPath]
+/// Only includes local packages (path starts with "/") that exist on disk
+private func resolvedLocalPackages(for projPath: String) -> [String: String] {
+    var packageMap = [String: String]()
+    var inSection  = false
+    for line in runXcodebuildList(for: projPath).components(separatedBy: "\n") {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed == "Resolved source packages:" { inSection = true; continue }
+        if trimmed.hasPrefix("Information about project") { break }
+        guard inSection, !trimmed.isEmpty, let separator = trimmed.range(of: ": ") else { continue }
+        let name = String(trimmed[trimmed.startIndex..<separator.lowerBound])
+        let path = String(trimmed[separator.upperBound...])
+        guard path.hasPrefix("/") else { continue }
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { continue }
+        packageMap[name] = path
+    }
+    return packageMap
+}
+
+/// Recursively scans a directory and returns .swift files, skipping Pods / .build / DerivedData
+private func scanSwiftFiles(in root: String) -> [String] {
+    var files = [String]()
+    guard let enumerator = fm.enumerator(
+        at: URL(fileURLWithPath: root).standardized,
         includingPropertiesForKeys: [.isRegularFileKey],
-        options: [.skipsHiddenFiles]) else { return files }
-    for case let url as URL in e {
-        let path = url.path
-        guard path.hasSuffix(".swift") else { continue }
-        guard !path.contains("/Pods/") else { continue }
-        guard !path.contains("/.build/") else { continue }
-        guard !path.contains("/DerivedData/") else { continue }
+        options: [.skipsHiddenFiles]
+    ) else { return files }
+    for case let url as URL in enumerator {
+        let path = url.standardized.path
+        guard path.hasSuffix(".swift"),
+              !path.contains("/Pods/"),
+              !path.contains("/.build/"),
+              !path.contains("/DerivedData/")
+        else { continue }
         files.append(path)
     }
     return files
 }
 
-func findXcodeprojFiles(in root: String) -> [String] {
-    var results: [String] = []
-    guard let e = fm.enumerator(at: URL(fileURLWithPath: root),
-        includingPropertiesForKeys: [.isDirectoryKey],
-        options: [.skipsHiddenFiles]) else { return results }
-    for case let url as URL in e {
-        let depth = url.pathComponents.count - URL(fileURLWithPath: root).pathComponents.count
-        if depth > 4 { e.skipDescendants(); continue }
-        if url.pathExtension == "xcodeproj" { results.append(url.path) }
-    }
-    return results
-}
-
-/// Returns local package names and their paths [name: path]
-func resolveAllPackages(projPath: String) -> [String: String] {
-    let output = xcodebuildList(projPath: projPath)
-    var packages: [String: String] = [:]
-    var inSection = false
-
-    for line in output.components(separatedBy: "\n") {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-        if trimmed == "Resolved source packages:" { inSection = true; continue }
-        if trimmed.hasPrefix("Information about project") { break }
-        guard inSection, !trimmed.isEmpty else { continue }
-
-        guard let range = trimmed.range(of: ": ") else { continue }
-        let name = String(trimmed[trimmed.startIndex..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
-        let path = String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespaces)
-
-        // Only local paths
-        guard path.hasPrefix("/") else { continue }
-        var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { continue }
-        packages[name] = path
-    }
-    return packages
-}
-
-// MARK: - Interactive selection
-func select(from options: [String], prompt: String, allLabel: String) -> [String] {
-    BTTLog.plain("\n\(prompt)\n")
-    for (i, opt) in options.enumerated() {
-        BTTLog.plain("\(i + 1). \(opt)")
-    }
-    BTTLog.info("\(options.count + 1). \(allLabel)")
-    BTTLog.prompt("\nEnter the number of the \(prompt.lowercased().contains("target") ? "target" : "scheme") to instrument: ")
-
-    if let input = readLine()?.trimmingCharacters(in: .whitespaces),
-       let idx = Int(input) {
-        if idx == options.count + 1 { return options }
-        if idx >= 1 && idx <= options.count { return [options[idx - 1]] }
-    }
-    return [options[0]]
-}
-
-// MARK: - Resolve xcodeproj only
-
-func resolveXcodeproj(args: BTTArgs) -> String? {
-    if let p = args.projectPath, fm.fileExists(atPath: p) { return p }
-    let found = findXcodeprojFiles(in: args.rootPath)
-    if found.count == 1 { return found[0] }
-    if found.isEmpty { return nil }
-    let names = found.map { ($0 as NSString).lastPathComponent }
-    let sel = select(from: names, prompt: "Multiple projects found:", allLabel: "all projects")
-    return found.first { ($0 as NSString).lastPathComponent == sel[0] }
-}
-
-// MARK: - Resolve target then scheme (scheme list filtered after target selected)
-
-func resolveTargetAndScheme(args: BTTArgs, xcodeprojPath: String) -> (target: String, scheme: String?) {
-
-    // Step 1 — Select target first
-    let targets = getTargets(from: xcodeprojPath)
-    var selectedTarget: String
-
-    if let t = args.target {
-        selectedTarget = t
-        BTTLog.info("Target: \(t)")
-    } else if targets.isEmpty {
-        selectedTarget = ""
-    } else {
-        BTTLog.info("Fetching targets for \((xcodeprojPath as NSString).lastPathComponent)...")
-        let sel = select(
-            from: targets,
-            prompt: "Which target do you want to instrument?",
-            allLabel: "all targets"
-        )
-        selectedTarget = sel.first ?? targets[0]
-    }
-
-    // Step 2 — Select scheme
-    // Only show app-level schemes (packages are hidden — they are dependencies)
-    let appSchemes = getAppSchemes(from: xcodeprojPath)
-    var selectedScheme: String? = args.scheme
-
-    if selectedScheme == nil && !appSchemes.isEmpty {
-        BTTLog.info("Fetching all available schemes for \((xcodeprojPath as NSString).lastPathComponent)...")
-        let sel = select(
-            from: appSchemes,
-            prompt: "Which scheme do you want to instrument?",
-            allLabel: "all schemes"
-        )
-        // nil means all schemes selected
-        selectedScheme = sel.count == 1 ? sel[0] : nil
-        if let s = selectedScheme { BTTLog.info("Scheme: \(s)") }
-        else { BTTLog.info("Instrumenting all schemes") }
-    }
-
-    return (selectedTarget, selectedScheme)
+/// Runs `xcodebuild -list -project <path>` and returns stdout as a string
+private func runXcodebuildList(for projPath: String) -> String {
+    let task = Process()
+    task.launchPath     = "/usr/bin/xcrun"
+    task.arguments      = ["xcodebuild", "-list", "-project", projPath]
+    let pipe            = Pipe()
+    task.standardOutput = pipe
+    task.standardError  = Pipe()
+    try? task.run()
+    task.waitUntilExit()
+    return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
 }
 
 #endif

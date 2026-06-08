@@ -8,151 +8,170 @@
 import Foundation
 
 // MARK: - Help
+
 func printHelp() {
-    BTTLog.plain("""
+    BTTLog.info("""
 
 BTTInstrumentor — BlueTriangle SwiftUI Screen Tracking
 
 USAGE
-  BTTInstrumentor install [project.xcodeproj] [--target <TARGET>] [--scheme <SCHEME>]
+  BTTInstrumentor install [project.xcodeproj]
+  BTTInstrumentor remove  [project.xcodeproj]
 
-WHAT IT DOES
-  1. Copies BTTInstrumentor to .btt/ in your project
-  2. Adds BTT Instrumentation Run Script before Compile Sources
-  Every Xcode build automatically injects @BTTTrack into SwiftUI views
-  including all local package dependencies of the selected target.
+COMMANDS
+  install   Instrument a target — adds scheme pre-action, saves target
+  remove    Remove instrumentation for a target or clean up everything
 
-EXAMPLES
-  BTTInstrumentor install
-  BTTInstrumentor install MyApp.xcodeproj
-  BTTInstrumentor install MyApp.xcodeproj --target MyApp
-  BTTInstrumentor install MyApp.xcodeproj --target MyApp --scheme "XYZ (Prod)"
+EXAMPLE
+  cd MyApp && BTTInstrumentor install
+  cd MyApp && BTTInstrumentor remove
 """)
 }
 
-// MARK: - Resolve executable path
-func resolveExecutablePath() -> String {
-    let arg0 = CommandLine.arguments[0]
-    if arg0.hasPrefix("/") && fm.fileExists(atPath: arg0) { return arg0 }
-    let task = Process()
-    task.launchPath = "/usr/bin/which"
-    task.arguments = ["BTTInstrumentor"]
-    let pipe = Pipe()
-    task.standardOutput = pipe
-    task.standardError = Pipe()
-    try? task.run()
-    task.waitUntilExit()
-    let path = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    return path.isEmpty ? arg0 : path
-}
+// MARK: - Install (interactive — run once by developer)
 
-// MARK: - Install (interactive — called by developer once)
 func cmdInstall(args: BTTArgs) {
 
-    // Called non-interactively from Run Script — just inject
-    if args.target != nil && isatty(STDIN_FILENO) == 0 {
-        cmdInject(args: args)
-        return
-    }
+    // Non-interactive — called from scheme pre-action every build
+    if isatty(STDIN_FILENO) == 0 { cmdInject(args: args); return }
 
     BTTLog.info("BlueTriangle BTTInstrumentor")
-    BTTLog.info("Project root: \(args.rootPath)")
 
-    // Step 1 — Resolve xcodeproj
     guard let xcodeprojPath = resolveXcodeproj(args: args) else {
-        BTTLog.error("No .xcodeproj found in \(args.rootPath)")
-        exit(1)
+        BTTLog.error("No .xcodeproj found in \(args.rootPath)"); exit(1)
     }
     let projectDir = (xcodeprojPath as NSString).deletingLastPathComponent
+    let store      = BTTTargetStore(projectDir: projectDir)
 
-    // Step 2 — Ask target first, then scheme
-    // Scheme list shows only app schemes (packages hidden — they are dependencies)
-    let (selectedTarget, selectedScheme) = resolveTargetAndScheme(args: args, xcodeprojPath: xcodeprojPath)
+    // Show all targets with (instrumented) badge
+    let allTargets = getTargets(in: xcodeprojPath)
+    guard !allTargets.isEmpty else { BTTLog.error("No targets found"); exit(1) }
 
-    // Step 3 — Copy binary to .btt (project root, shared by all targets)
-    let bttDir    = (projectDir as NSString).appendingPathComponent(".btt")
-    let bttBinary = (bttDir as NSString).appendingPathComponent("BTTInstrumentor")
+    BTTLog.info("\nWhich target do you want to instrument?\n")
+    allTargets.enumerated().forEach { i, t in
+        BTTLog.info("\(i + 1). \(t)\(store.isInstrumented(t) ? " (instrumented)" : "")")
+    }
+    BTTLog.info("\nEnter the number of the target to instrument: ")
 
-    do {
-        if !fm.fileExists(atPath: bttDir) {
-            try fm.createDirectory(atPath: bttDir, withIntermediateDirectories: true)
-        }
-        if fm.fileExists(atPath: bttBinary) {
-            try fm.removeItem(atPath: bttBinary)
-        }
-        let selfPath = resolveExecutablePath()
-        BTTLog.info("Binary source: \(selfPath)")
-        try fm.copyItem(atPath: selfPath, toPath: bttBinary)
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bttBinary)
-        BTTLog.success("Binary installed: \(bttBinary)")
-    } catch {
-        BTTLog.error("Failed to copy binary: \(error.localizedDescription)")
+    var selected = allTargets[0]
+    if let input = readLine()?.trimmingCharacters(in: .whitespaces),
+       let idx = Int(input), (1...allTargets.count).contains(idx) {
+        selected = allTargets[idx - 1]
     }
 
-    // Step 4 — Add build phase to selected target
-    // scheme is baked into the Run Script:
-    // - nil  → Run Script injects target files + ALL its local package deps
-    // - "XYZ (Prod)" → Run Script injects only that scheme's files
-    addBuildPhase(xcodeprojPath: xcodeprojPath, targetName: selectedTarget, scheme: selectedScheme)
-
-    BTTLog.success("Done. Build your app in Xcode — @BTTTrack injected automatically every build.")
+    copyBinary(to: projectDir)
+    addBuildPhase(xcodeprojPath: xcodeprojPath, targetName: selected)
+    store.add(selected)
+    BTTLog.success("✓ '\(selected)' is ready to instrument")
 }
 
-// MARK: - Inject (called by Run Script every build — non-interactive)
-func cmdInject(args: BTTArgs) {
-    let found = findXcodeprojFiles(in: args.rootPath)
-    guard let xcodeproj = found.first else {
-        BTTLog.warn("No .xcodeproj found")
-        return
+// MARK: - Remove (interactive — removes instrumentation)
+
+func cmdRemove(args: BTTArgs) {
+    BTTLog.info("BlueTriangle BTTInstrumentor — Remove")
+
+    guard let xcodeprojPath = resolveXcodeproj(args: args) else {
+        BTTLog.error("No .xcodeproj found in \(args.rootPath)"); exit(1)
     }
+    let projectDir = (xcodeprojPath as NSString).deletingLastPathComponent
+    let store      = BTTTargetStore(projectDir: projectDir)
+
+    let instrumented = store.targets
+    guard !instrumented.isEmpty else {
+        BTTLog.warn("No instrumented targets found"); return
+    }
+
+    // Show instrumented targets + remove all option
+    BTTLog.info("\nWhich target do you want to remove?\n")
+    instrumented.enumerated().forEach { i, t in BTTLog.info("\(i + 1). \(t)") }
+    BTTLog.info("\(instrumented.count + 1). Remove all (full clean up)")
+    BTTLog.info("\nEnter the number: ")
+
+    guard let input = readLine()?.trimmingCharacters(in: .whitespaces),
+          let idx = Int(input), (1...instrumented.count + 1).contains(idx)
+    else { BTTLog.warn("Invalid selection"); return }
+
+    if idx == instrumented.count + 1 {
+        // Remove all — full clean up
+        removePreActions(for: nil, in: xcodeprojPath)
+        cleanupBttFolder(projectDir: projectDir)
+        BTTLog.success("✓ All BTT instrumentation removed.")
+    } else {
+        // Remove single target — keep pre-action in schemes shared with other instrumented targets
+        let target       = instrumented[idx - 1]
+        let keepTargets  = instrumented.filter { $0 != target }
+        removePreActions(for: target, in: xcodeprojPath, keepTargets: keepTargets)
+        store.remove(target)
+        BTTLog.success("✓ '\(target)' removed.")
+    }
+}
+
+// MARK: - Inject (called by scheme pre-action every build)
+
+func cmdInject(args: BTTArgs) {
+    guard let xcodeproj = resolveXcodeproj(args: args) else {
+        BTTLog.warn("No .xcodeproj found"); return
+    }
+
+    let projectDir = (xcodeproj as NSString).deletingLastPathComponent
+    let store      = BTTTargetStore(projectDir: projectDir)
+    let targets    = store.targets.isEmpty ? getTargets(in: xcodeproj) : store.targets
 
     var files: [String] = []
-    var seen = Set<String>()
+    var seen  = Set<String>()
+    func add(_ f: [String]) { f.filter { seen.insert($0).inserted }.forEach { files.append($0) } }
 
-    func add(_ newFiles: [String]) {
-        for f in newFiles where !seen.contains(f) { seen.insert(f); files.append(f) }
-    }
+    for target in targets { add(getSwiftFiles(for: target, in: xcodeproj)) }
 
-    let target = args.target ?? ""
-
-    // Always inject target source files
-    add(getSourceFiles(for: target, in: xcodeproj))
-
-    // Always inject local package dependencies of this target
-    add(getLocalPackagesForTarget(target, in: xcodeproj)
-        .flatMap { findAllSwiftFiles(in: $0) })
-
-    // Fallback — if xcodeproj returns no files, scan target folder
-    if files.isEmpty {
-        let projDir = (xcodeproj as NSString).deletingLastPathComponent
-        let targetDir = (projDir as NSString).appendingPathComponent(target)
-        if fm.fileExists(atPath: targetDir) {
-            add(findAllSwiftFiles(in: targetDir))
-        }
-    }
-
-    guard !files.isEmpty else {
-        BTTLog.warn("No Swift files found")
-        return
-    }
+    guard !files.isEmpty else { BTTLog.warn("No Swift files found"); return }
 
     var injected = 0
-    for file in files {
-        if injectFile(file) {
-            injected += 1
-            BTTLog.success("Injected: \(URL(fileURLWithPath: file).lastPathComponent)")
-        }
+    for file in files where injectFile(file) {
+        injected += 1
+        BTTLog.success("Injected: \(URL(fileURLWithPath: file).lastPathComponent)")
     }
     BTTLog.success("BTT: Injected \(injected) view(s)")
 }
 
+// MARK: - Copy binary
+
+private func copyBinary(to projectDir: String) {
+    let bttDir = (projectDir as NSString).appendingPathComponent(".btt")
+    let dest   = (bttDir as NSString).appendingPathComponent("BTTInstrumentor")
+    let src: String = {
+        let arg0 = CommandLine.arguments[0]
+        if arg0.hasPrefix("/") && fm.fileExists(atPath: arg0) { return arg0 }
+        let t = Process(); t.launchPath = "/usr/bin/which"; t.arguments = ["BTTInstrumentor"]
+        let p = Pipe(); t.standardOutput = p; t.standardError = Pipe()
+        try? t.run(); t.waitUntilExit()
+        let s = String(data: p.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return s.isEmpty ? arg0 : s
+    }()
+    do {
+        if fm.fileExists(atPath: dest) { try fm.removeItem(atPath: dest) }
+        try fm.copyItem(atPath: src, toPath: dest)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest)
+    } catch {
+        BTTLog.error("Binary copy failed: \(error.localizedDescription)")
+    }
+}
+
+// MARK: - Full clean up
+
+private func cleanupBttFolder(projectDir: String) {
+    let bttDir = (projectDir as NSString).appendingPathComponent(".btt")
+    try? fm.removeItem(atPath: bttDir)
+}
+
 // MARK: - Entry
+
 func run() {
     let args = parseArgs()
     guard !args.command.isEmpty else { printHelp(); exit(0) }
     switch args.command {
     case "install":              cmdInstall(args: args)
+    case "remove":               cmdRemove(args: args)
     case "help", "--help", "-h": printHelp()
     default: BTTLog.error("Unknown command: \(args.command)"); printHelp(); exit(1)
     }

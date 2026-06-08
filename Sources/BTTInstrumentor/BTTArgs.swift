@@ -1,5 +1,5 @@
 //
-//  Args.swift
+//  BTTArgs.swift
 //  BTTInstrumentor
 //
 //  Created by Ashok Singh on 04/06/26.
@@ -22,19 +22,19 @@ func parseArgs() -> BTTArgs {
     result.command = remaining.removeFirst()
     var i = 0
     while i < remaining.count {
-        let arg = remaining[i]
-        switch arg {
+        switch remaining[i] {
         case "--target":
             if i + 1 < remaining.count { result.target = remaining[i + 1]; i += 1 }
         case "--scheme":
             if i + 1 < remaining.count { result.scheme = remaining[i + 1]; i += 1 }
         default:
-            if !arg.hasPrefix("--") {
-                if arg.hasSuffix(".xcodeproj") { result.projectPath = arg }
-                else {
-                    result.rootPath = arg.hasPrefix("~")
-                        ? NSHomeDirectory() + arg.dropFirst()
-                        : arg
+            if !remaining[i].hasPrefix("--") {
+                if remaining[i].hasSuffix(".xcodeproj") {
+                    result.projectPath = remaining[i]
+                } else {
+                    result.rootPath = remaining[i].hasPrefix("~")
+                        ? NSHomeDirectory() + remaining[i].dropFirst()
+                        : remaining[i]
                 }
             }
         }

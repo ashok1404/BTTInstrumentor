@@ -20,7 +20,5 @@ enum BTTLog {
     static func success(_ msg: String) { print("\(green)\(msg)\(reset)") }
     static func warn(_ msg: String)    { print("\(yellow)warning: \(msg)\(reset)") }
     static func error(_ msg: String)   { print("\(red)error: \(msg)\(reset)") }
-    static func plain(_ msg: String)   { print(msg) }
-    static func prompt(_ msg: String)  { print(msg, terminator: "") }
 }
 #endif
