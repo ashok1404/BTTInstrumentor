@@ -17,7 +17,7 @@ BTTInstrumentor — BlueTriangle SwiftUI Screen Tracking
 USAGE
   BTTInstrumentor install    [project.xcodeproj]
   BTTInstrumentor instrument [project.xcodeproj]
-  BTTInstrumentor uninstall     [project.xcodeproj]
+  BTTInstrumentor uninstall  [project.xcodeproj]
 
 COMMANDS
   install     Adds scheme pre-action and saves target (no injection)
@@ -31,7 +31,7 @@ EXAMPLE
 """)
 }
 
-// MARK: - Install (interactive — sets up pre-action, no injection)
+// MARK: - Install
 
 func cmdInstall(args: BTTArgs) {
 
@@ -44,13 +44,11 @@ func cmdInstall(args: BTTArgs) {
         BTTLog.error("No .xcodeproj found in \(args.rootPath)"); exit(1)
     }
 
-    // Version gate — must be ≥ 3.15.13
-    guard checkBTTVersionAndProceed(xcodeprojPath: xcodeprojPath) else { exit(0) }
+   // guard checkBTTVersionAndProceed(xcodeprojPath: xcodeprojPath) else { exit(0) }
 
     let projectDir = (xcodeprojPath as NSString).deletingLastPathComponent
     let store      = BTTTargetStore(projectDir: projectDir)
-
-    let selected = pickTarget(xcodeprojPath: xcodeprojPath, store: store)
+    let selected   = pickTarget(xcodeprojPath: xcodeprojPath, store: store)
 
     copyBinary(to: projectDir)
     writeBTTInstrumentScript(to: projectDir)
@@ -59,7 +57,8 @@ func cmdInstall(args: BTTArgs) {
     BTTLog.success("✓ '\(selected)' is ready — build in Xcode to inject @BTTTrack.")
 }
 
-// MARK: - Instrument (interactive — sets up pre-action AND injects immediately)
+// MARK: - Instrument
+
 func cmdInstrument(args: BTTArgs) {
     BTTLog.info("BlueTriangle BTTInstrumentor — Instrument")
 
@@ -67,21 +66,17 @@ func cmdInstrument(args: BTTArgs) {
         BTTLog.error("No .xcodeproj found in \(args.rootPath)"); exit(1)
     }
 
-    // Version gate — must be ≥ 3.15.13
     guard checkBTTVersionAndProceed(xcodeprojPath: xcodeprojPath) else { exit(0) }
 
     let projectDir = (xcodeprojPath as NSString).deletingLastPathComponent
     let store      = BTTTargetStore(projectDir: projectDir)
+    let selected   = pickTarget(xcodeprojPath: xcodeprojPath, store: store)
 
-    let selected = pickTarget(xcodeprojPath: xcodeprojPath, store: store)
-
-    // Setup — copy binary, add pre-action, save target
     copyBinary(to: projectDir)
     writeBTTInstrumentScript(to: projectDir)
     let trackerAdded = addPreAction(xcodeprojPath: xcodeprojPath, targetName: selected)
     store.add(selected, bttSwiftUITrackerAdded: trackerAdded)
 
-    // Inject immediately
     BTTLog.info("Injecting @BTTTrack into '\(selected)'...")
     let files = getSwiftFiles(for: selected, in: xcodeprojPath)
     guard !files.isEmpty else { BTTLog.warn("No Swift files found for '\(selected)'"); return }
@@ -94,13 +89,15 @@ func cmdInstrument(args: BTTArgs) {
     BTTLog.success("✓ '\(selected)' instrumented — \(injected) view(s) injected.")
 }
 
-// MARK: - Uninstall (interactive)
+// MARK: - Uninstall
+
 func cmdUninstall(args: BTTArgs) {
     BTTLog.info("BlueTriangle BTTInstrumentor — Uninstall")
 
     guard let xcodeprojPath = resolveXcodeproj(args: args) else {
         BTTLog.error("No .xcodeproj found in \(args.rootPath)"); exit(1)
     }
+
     let projectDir   = (xcodeprojPath as NSString).deletingLastPathComponent
     let store        = BTTTargetStore(projectDir: projectDir)
     let instrumented = store.targets
@@ -113,31 +110,26 @@ func cmdUninstall(args: BTTArgs) {
     BTTLog.info("\nEnter the number: ")
 
     guard let input = readLine()?.trimmingCharacters(in: .whitespaces),
-          let idx = Int(input), (1...instrumented.count + 1).contains(idx)
+          let idx   = Int(input), (1...instrumented.count + 1).contains(idx)
     else { BTTLog.warn("Invalid selection"); return }
 
     if idx == instrumented.count + 1 {
-        let removed = removePreActions(for: nil, in: xcodeprojPath, store: store)
+        for target in instrumented { revertInjectedSwiftFiles(for: target, in: xcodeprojPath) }
+        removePreActions(for: nil, in: xcodeprojPath, store: store)
         cleanupBttFolder(projectDir: projectDir)
-        if removed {
-            BTTLog.success("✓ All BTT instrumentation removed.")
-        } else {
-            BTTLog.warn("Pre-actions not found in schemes — .btt folder cleaned up.")
-        }
+        BTTLog.success("✓ All BTT instrumentation removed.")
     } else {
         let target      = instrumented[idx - 1]
         let keepTargets = instrumented.filter { $0 != target }
-        let removed     = removePreActions(for: target, in: xcodeprojPath, keepTargets: keepTargets, store: store)
+        revertInjectedSwiftFiles(for: target, in: xcodeprojPath)
+        removePreActions(for: target, in: xcodeprojPath, keepTargets: keepTargets, store: store)
         store.remove(target)
-        if removed {
-            BTTLog.success("✓ '\(target)' removed.")
-        } else {
-            BTTLog.warn("Pre-action not found for '\(target)' in schemes — target removed from config.")
-        }
+        BTTLog.success("✓ '\(target)' removed.")
     }
 }
 
 // MARK: - Inject (called by scheme pre-action every build — non-interactive)
+
 func cmdInject(args: BTTArgs) {
     guard let xcodeproj = resolveXcodeproj(args: args) else {
         BTTLog.warn("No .xcodeproj found"); return
@@ -146,16 +138,17 @@ func cmdInject(args: BTTArgs) {
     let projectDir = (xcodeproj as NSString).deletingLastPathComponent
     let store      = BTTTargetStore(projectDir: projectDir)
 
-    // Silently restore any deleted .btt files before injecting
     repairBttFolder(projectDir: projectDir, xcodeprojPath: xcodeproj, store: store)
 
     let targets = store.targets.isEmpty ? getTargets(in: xcodeproj) : store.targets
 
     var files: [String] = []
     var seen  = Set<String>()
-    func add(_ f: [String]) { f.filter { seen.insert($0).inserted }.forEach { files.append($0) } }
-
-    for target in targets { add(getSwiftFiles(for: target, in: xcodeproj)) }
+    for target in targets {
+        getSwiftFiles(for: target, in: xcodeproj)
+            .filter { seen.insert($0).inserted }
+            .forEach { files.append($0) }
+    }
 
     guard !files.isEmpty else { BTTLog.warn("No Swift files found"); return }
 
@@ -167,7 +160,8 @@ func cmdInject(args: BTTArgs) {
     BTTLog.success("BTT: Injected \(injected) view(s)")
 }
 
-// MARK: - Pick target (shared by install and instrument)
+// MARK: - Pick target
+
 private func pickTarget(xcodeprojPath: String, store: BTTTargetStore) -> String {
     let allTargets = getTargets(in: xcodeprojPath)
     guard !allTargets.isEmpty else { BTTLog.error("No targets found"); exit(1) }
@@ -185,37 +179,35 @@ private func pickTarget(xcodeprojPath: String, store: BTTTargetStore) -> String 
     return allTargets[0]
 }
 
-// MARK: - Repair .btt folder (called from cmdInject on every build)
-/// Silently restores any deleted .btt artifacts so injection keeps working
-/// even if someone manually deleted files from .btt/.
+// MARK: - Revert injected Swift files
+private func revertInjectedSwiftFiles(for target: String, in xcodeprojPath: String) {
+    let files = getSwiftFiles(for: target, in: xcodeprojPath)
+    var removed = 0
+    for file in files where revertInjectedFile(file) {
+        removed += 1
+        BTTLog.success("Revert injection: \(URL(fileURLWithPath: file).lastPathComponent)")
+    }
+    if removed > 0 { BTTLog.success("BTT: Removed instrumentation from \(removed) file(s).") }
+}
+
+// MARK: - Repair .btt folder
 private func repairBttFolder(projectDir: String, xcodeprojPath: String, store: BTTTargetStore) {
     let bttDir     = (projectDir as NSString).appendingPathComponent(".btt")
     let binaryPath = (bttDir as NSString).appendingPathComponent("BTTInstrumentor")
     let scriptPath = (bttDir as NSString).appendingPathComponent("btt_instrument.sh")
     let configPath = (bttDir as NSString).appendingPathComponent("btt_config.json")
 
-    // Recreate .btt dir if entirely deleted
     if !fm.fileExists(atPath: bttDir) {
         try? fm.createDirectory(atPath: bttDir, withIntermediateDirectories: true)
-        BTTLog.warn("BTT: .btt folder was missing — recreated.")
     }
-
-    // Restore binary
     if !fm.fileExists(atPath: binaryPath) {
         copyBinary(to: projectDir)
-        BTTLog.warn("BTT: BTTInstrumentor binary was missing — restored.")
     }
-
-    // Restore shell script
     if !fm.fileExists(atPath: scriptPath) {
         writeBTTInstrumentScript(to: projectDir)
-        BTTLog.warn("BTT: btt_instrument.sh was missing — restored.")
     }
-
-    // btt_config.json missing — targets are lost, re-add from xcodeproj if possible
     if !fm.fileExists(atPath: configPath) {
-        BTTLog.warn("BTT: btt_config.json was missing — targets lost. Re-run 'BTTInstrumentor install' to reconfigure.")
-        // Best-effort: re-add pre-action for all targets so next build works
+        BTTLog.warn("BTT: btt_config.json missing — re-run 'BTTInstrumentor install' to reconfigure.")
         for target in getTargets(in: xcodeprojPath) {
             let added = addPreAction(xcodeprojPath: xcodeprojPath, targetName: target)
             store.add(target, bttSwiftUITrackerAdded: added)
@@ -224,6 +216,7 @@ private func repairBttFolder(projectDir: String, xcodeprojPath: String, store: B
 }
 
 // MARK: - Copy binary
+
 private func copyBinary(to projectDir: String) {
     let bttDir = (projectDir as NSString).appendingPathComponent(".btt")
     let dest   = (bttDir as NSString).appendingPathComponent("BTTInstrumentor")
@@ -246,12 +239,14 @@ private func copyBinary(to projectDir: String) {
     }
 }
 
-// MARK: - Full clean up
+// MARK: - Clean up
+
 private func cleanupBttFolder(projectDir: String) {
     try? fm.removeItem(atPath: (projectDir as NSString).appendingPathComponent(".btt"))
 }
 
 // MARK: - Entry
+
 func run() {
     let args = parseArgs()
     guard !args.command.isEmpty else { printHelp(); exit(0) }
