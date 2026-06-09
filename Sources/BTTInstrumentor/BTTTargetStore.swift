@@ -7,53 +7,70 @@
 
 import Foundation
 
+// Stores [targetName] — list of instrumented targets
+// and [targetName: Bool] — whether BTTSwiftUITracker was added by BTTInstrumentor
 struct BTTTargetStore {
 
     private let path: String
 
+    private struct StoreData: Codable {
+        var targets: [String]
+        var bttSwiftUITrackerAdded: [String: Bool] // targetName → true if we added BTTSwiftUITracker
+    }
+
     init(projectDir: String) {
         let bttDir = (projectDir as NSString).appendingPathComponent(".btt")
-        self.path  = (bttDir as NSString).appendingPathComponent("targets.json")
+        self.path  = (bttDir as NSString).appendingPathComponent("btt_config.json")
         if !FileManager.default.fileExists(atPath: bttDir) {
             try? FileManager.default.createDirectory(atPath: bttDir, withIntermediateDirectories: true)
         }
     }
 
     var targets: [String] {
-        guard fm.fileExists(atPath: path) else { return [] }
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
-            BTTLog.warn("targets.json is unreadable — starting fresh")
-            return []
-        }
-        guard let list = try? JSONDecoder().decode([String].self, from: data) else {
-            BTTLog.warn("targets.json is corrupted — starting fresh")
-            try? fm.removeItem(atPath: path)
-            return []
-        }
-        return list
-    }
-
-    func add(_ target: String) {
-        var list = targets
-        guard !list.contains(target) else { return }
-        list.append(target)
-        save(list)
-    }
-
-    func remove(_ target: String) {
-        save(targets.filter { $0 != target })
+        load()?.targets ?? []
     }
 
     func isInstrumented(_ target: String) -> Bool {
         targets.contains(target)
     }
 
-    private func save(_ list: [String]) {
-        guard let data = try? JSONEncoder().encode(list) else { return }
-        // Remove read-only if exists before writing
-        try? fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: path)
-        try? data.write(to: URL(fileURLWithPath: path))
-        // Make read-only — prevents manual edits
-        try? fm.setAttributes([.posixPermissions: 0o444], ofItemAtPath: path)
+    /// Returns true only if BTTInstrumentor added BTTSwiftUITracker for this target
+    func didAddBTTSwiftUITracker(for target: String) -> Bool {
+        load()?.bttSwiftUITrackerAdded[target] ?? false
+    }
+
+    func add(_ target: String, bttSwiftUITrackerAdded: Bool = false) {
+        var data = load() ?? StoreData(targets: [], bttSwiftUITrackerAdded: [:])
+        if !data.targets.contains(target) { data.targets.append(target) }
+        data.bttSwiftUITrackerAdded[target] = bttSwiftUITrackerAdded
+        save(data)
+    }
+
+    func remove(_ target: String) {
+        guard var data = load() else { return }
+        data.targets = data.targets.filter { $0 != target }
+        data.bttSwiftUITrackerAdded.removeValue(forKey: target)
+        save(data)
+    }
+
+    // MARK: - Private
+
+    private func load() -> StoreData? {
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        guard let raw = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
+            BTTLog.warn("btt_config.json unreadable — starting fresh"); return nil
+        }
+        guard let data = try? JSONDecoder().decode(StoreData.self, from: raw) else {
+            BTTLog.warn("btt_config.json corrupted — starting fresh")
+            try? FileManager.default.removeItem(atPath: path); return nil
+        }
+        return data
+    }
+
+    private func save(_ data: StoreData) {
+        guard let raw = try? JSONEncoder().encode(data) else { return }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: path)
+        try? raw.write(to: URL(fileURLWithPath: path))
+        try? FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: path)
     }
 }
