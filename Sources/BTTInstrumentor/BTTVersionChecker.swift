@@ -127,8 +127,8 @@ private func fetchLatestBTTVersion() -> String? {
 /// Returns true if instrumentation should proceed, exits otherwise.
 func checkBTTVersionAndProceed(xcodeprojPath: String) -> Bool {
     guard let version = resolvedBTTVersion(xcodeprojPath: xcodeprojPath) else {
-        BTTLog.warn("Could not read BlueTriangle version — proceeding anyway.")
-        return true
+        BTTLog.error("Could not find BlueTriangle SDK — please add before proceeding.")
+        return false
     }
 
     guard !isVersion(version, atLeast: kMinBTTVersion) else {

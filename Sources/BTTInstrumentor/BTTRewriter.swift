@@ -13,7 +13,7 @@ final class BTTRewriter: SyntaxRewriter {
 
     var injectedCount = 0
 
-    // Source file level — add import BlueTriangle after import SwiftUI
+    // Source file level — add import BTTSwiftUITracker after import SwiftUI
     override func visit(_ node: SourceFileSyntax) -> SourceFileSyntax {
         // First let super visit all children (including structs)
         let visited = super.visit(node)
@@ -23,14 +23,14 @@ final class BTTRewriter: SyntaxRewriter {
 
         guard !visited.statements.contains(where: { stmt in
             guard let d = stmt.item.as(ImportDeclSyntax.self) else { return false }
-            return d.path.trimmedDescription == "BlueTriangle"
+            return d.path.trimmedDescription == "BTTSwiftUITracker"
         }) else { return visited }
 
         let bttImport = ImportDeclSyntax(
             leadingTrivia: .newline,
             importKeyword: .keyword(.import, trailingTrivia: .space),
             path: ImportPathComponentListSyntax([
-                ImportPathComponentSyntax(name: .identifier("BlueTriangle"))
+                ImportPathComponentSyntax(name: .identifier("BTTSwiftUITracker"))
             ])
         )
 

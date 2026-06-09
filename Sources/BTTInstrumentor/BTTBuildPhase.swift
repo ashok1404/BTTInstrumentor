@@ -4,261 +4,131 @@
 //
 //  Created by Ashok Singh on 04/06/26.
 //
+//  Manages Xcode scheme pre-actions for BTT instrumentation.
+//  - addPreAction:    injects BTT pre-action into matching xcschemes
+//  - removePreActions: strips BTT pre-action from xcschemes
+//
 
 #if os(macOS)
 import Foundation
 import PathKit
 import XcodeProj
 
-// MARK: - Shell script content — written to .btt/btt_instrument.sh at install time
+// MARK: - Add pre-action
 
-func writeBTTInstrumentScript(to projectDir: String) {
-    let bttDir    = (projectDir as NSString).appendingPathComponent(".btt")
-    let scriptPath = (bttDir as NSString).appendingPathComponent("btt_instrument.sh")
-
-    let content = """
-#!/bin/bash
-export PATH="$PATH:/usr/local/bin"
-export PATH="$PATH:/opt/homebrew/bin"
-
-if [[ -x "$SRCROOT/.btt/BTTInstrumentor" ]]; then
-    "$SRCROOT/.btt/BTTInstrumentor" install "$SRCROOT"
-elif [[ -x "$(command -v BTTInstrumentor)" ]]; then
-    "$(command -v BTTInstrumentor)" install "$SRCROOT"
-else
-    echo "error: BTTInstrumentor not found. Run: brew install bttinstrumentor"
-    exit 1
-fi
-"""
-    try? content.write(toFile: scriptPath, atomically: true, encoding: .utf8)
-    try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptPath)
-}
-
-// Pre-action script — delegates to .btt/btt_instrument.sh
-private func buildScript() -> String {
-"""
-export PATH="$PATH:/usr/local/bin"
-export PATH="$PATH:/opt/homebrew/bin"
-bash "$SRCROOT/.btt/btt_instrument.sh"
-exit $?
-"""
-}
-
-// MARK: - Add BTTSwiftUITracker package dependency
-/// Adds BTTSwiftUITracker as a package product dependency to the target
-/// Returns true if it was added by us, false if already existed
 @discardableResult
-private func addBTTSwiftUITrackerDependency(xcodeprojPath: String, targetName: String) -> Bool {
-    guard let xcodeproj = try? XcodeProj(path: Path(xcodeprojPath)),
-          let target = xcodeproj.pbxproj.nativeTargets.first(where: { $0.name == targetName })
-    else { return false }
-
-    // Already added — either by us or manually by developer
-    let alreadyAdded = (target.packageProductDependencies ?? [])
-        .contains { $0.productName == "BTTSwiftUITracker" }
-    guard !alreadyAdded else { return false } // false = we didn't add it
-
-    guard let bttPackage = (target.packageProductDependencies ?? [])
-        .first(where: { $0.productName == "BlueTriangle" })?.package
-    else {
-        BTTLog.warn("BlueTriangle package not found in target '\(targetName)' — skipping BTTSwiftUITracker")
+func addPreAction(xcodeprojPath: String, targetName: String) -> Bool {
+    let bttSwiftUITrackerAdded = addBTTSwiftUITrackerDependency(xcodeprojPath: xcodeprojPath, targetName: targetName)
+    guard bttSwiftUITrackerAdded else {
+        BTTLog.warn("BTTSwiftUITracker not added for '\(targetName)' — skipping pre-action.")
         return false
     }
+    let projName = ((xcodeprojPath as NSString).lastPathComponent as NSString).deletingPathExtension
 
-    let dep = XCSwiftPackageProductDependency(productName: "BTTSwiftUITracker")
-    dep.package = bttPackage
-    xcodeproj.pbxproj.add(object: dep)
-    target.packageProductDependencies = (target.packageProductDependencies ?? []) + [dep]
-    try? xcodeproj.write(path: Path(xcodeprojPath))
+    for schemePath in collectSchemePaths(in: xcodeprojPath) {
+        guard var content = try? String(contentsOfFile: schemePath, encoding: .utf8),
+              content.contains("BlueprintName = \"\(targetName)\""),
+              !content.contains("BTT Instrumentation")
+        else { continue }
+
+        let action = buildAction(
+            blueprintID: extractBlueprintID(from: content, targetName: targetName) ?? "",
+            targetName: targetName,
+            projName: projName
+        )
+        content = insertAction(action, into: content)
+        try? content.write(toFile: schemePath, atomically: true, encoding: .utf8)
+    }
     return true
 }
 
-// MARK: - Remove BTTSwiftUITracker package dependency
-/// Removes BTTSwiftUITracker ONLY if BTTInstrumentor originally added it
-/// Never removes if developer added it manually
-private func removeBTTSwiftUITrackerDependency(xcodeprojPath: String, targetName: String, store: BTTTargetStore) {
-    guard store.didAddBTTSwiftUITracker(for: targetName) else { return }
-
-    guard let xcodeproj = try? XcodeProj(path: Path(xcodeprojPath)),
-          let target = xcodeproj.pbxproj.nativeTargets.first(where: { $0.name == targetName })
-    else { return }
-
-    let before = target.packageProductDependencies ?? []
-    let after  = before.filter { $0.productName != "BTTSwiftUITracker" }
-    guard after.count != before.count else { return }
-
-    before.filter { $0.productName == "BTTSwiftUITracker" }
-          .forEach { xcodeproj.pbxproj.delete(object: $0) }
-    target.packageProductDependencies = after
-    try? xcodeproj.write(path: Path(xcodeprojPath))
-}
-
-// MARK: - Add pre-action
-// One pre-action per scheme with target baked in
-// Only adds to schemes that build the selected target (matched via BlueprintName)
-// Skips if pre-action already exists
-
 @discardableResult
-func addBuildPhase(xcodeprojPath: String, targetName: String) -> Bool {
-    // Add BTTSwiftUITracker package dependency to target — returns true if we added it
-    let bttSwiftUITrackerAdded = addBTTSwiftUITrackerDependency(xcodeprojPath: xcodeprojPath, targetName: targetName)
-
-    let projName = ((xcodeprojPath as NSString).lastPathComponent as NSString).deletingPathExtension
-
-    // Check both shared schemes and user-specific schemes
-    let sharedSchemesDir = (xcodeprojPath as NSString).appendingPathComponent("xcshareddata/xcschemes")
-    let userDataDir      = (xcodeprojPath as NSString).appendingPathComponent("xcuserdata")
-    var schemePaths: [String] = []
-
-    // Shared schemes
-    if let files = try? FileManager.default.contentsOfDirectory(atPath: sharedSchemesDir) {
-        schemePaths += files
-            .filter { $0.hasSuffix(".xcscheme") }
-            .map { (sharedSchemesDir as NSString).appendingPathComponent($0) }
-    }
-
-    // User-specific schemes — xcuserdata/<user>.xcuserdatad/xcschemes/
-    if let users = try? FileManager.default.contentsOfDirectory(atPath: userDataDir) {
-        for user in users where user.hasSuffix(".xcuserdatad") {
-            let userSchemesDir = ((userDataDir as NSString).appendingPathComponent(user) as NSString)
-                .appendingPathComponent("xcschemes")
-            if let files = try? FileManager.default.contentsOfDirectory(atPath: userSchemesDir) {
-                schemePaths += files
-                    .filter { $0.hasSuffix(".xcscheme") }
-                    .map { (userSchemesDir as NSString).appendingPathComponent($0) }
-            }
-        }
-    }
-
-    guard !schemePaths.isEmpty else {
-        BTTLog.error("No schemes found in \(xcodeprojPath)");
-        return false
-    }
-
-    for schemePath in schemePaths {
-        guard var content = try? String(contentsOfFile: schemePath, encoding: .utf8) else { continue }
-
-        // Only schemes that build this target
-        guard content.contains("BlueprintName = \"\(targetName)\"") else { continue }
-
-        // Skip — pre-action already exists
-        if content.contains("BTT Instrumentation") { continue }
-
-        let blueprintID   = extractBlueprintID(from: content, targetName: targetName) ?? ""
-        let escapedScript = buildScript()
-            .replacingOccurrences(of: "&",  with: "&amp;")
-            .replacingOccurrences(of: "\"", with: "&quot;")
-            .replacingOccurrences(of: "<",  with: "&lt;")
-            .replacingOccurrences(of: ">",  with: "&gt;")
-            .replacingOccurrences(of: "\n", with: "&#10;") + "&#10;"
-
-        let action =
-            "         <ExecutionAction\n" +
-            "            ActionType = \"Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction\">\n" +
-            "            <ActionContent\n" +
-            "               title = \"BTT Instrumentation\"\n" +
-            "               scriptText = \"\(escapedScript)\">\n" +
-            "               <EnvironmentBuildable>\n" +
-            "                  <BuildableReference\n" +
-            "                     BuildableIdentifier = \"primary\"\n" +
-            "                     BlueprintIdentifier = \"\(blueprintID)\"\n" +
-            "                     BuildableName = \"\(targetName).app\"\n" +
-            "                     BlueprintName = \"\(targetName)\"\n" +
-            "                     ReferencedContainer = \"container:\(projName).xcodeproj\">\n" +
-            "                  </BuildableReference>\n" +
-            "               </EnvironmentBuildable>\n" +
-            "            </ActionContent>\n" +
-            "         </ExecutionAction>\n"
-
-        // Insert at TOP of PreActions — before any existing actions
-        if content.contains("      <PreActions>") {
-            // Insert right after <PreActions> opening tag — BTT runs first
-            content = content.replacingOccurrences(
-                of: "      <PreActions>",
-                with: "      <PreActions>\n" + action
-            )
-        } else if content.contains("<PreActions>") {
-            if let range = content.range(of: "<PreActions>") {
-                let insertPos = range.upperBound
-                content.insert(contentsOf: "\n" + action, at: insertPos)
-            }
-        } else {
-            // No PreActions block — create one before BuildActionEntries
-            let block = "      <PreActions>\n" + action + "      </PreActions>\n"
-            content = content.replacingOccurrences(
-                of: "      <BuildActionEntries>",
-                with: block + "      <BuildActionEntries>"
-            )
-        }
-
-        try? content.write(toFile: schemePath, atomically: true, encoding: .utf8)
-    }
-    return bttSwiftUITrackerAdded
-}
-// target = nil → remove from all schemes (full clean up)
-// target = "Xpo" → remove only from schemes that build Xpo
-//                  but keep if another instrumented target shares that scheme
-
-func removePreActions(for target: String?, in xcodeprojPath: String, keepTargets: [String] = [], store: BTTTargetStore) {
-    let sharedSchemesDir = (xcodeprojPath as NSString).appendingPathComponent("xcshareddata/xcschemes")
-    let userDataDir      = (xcodeprojPath as NSString).appendingPathComponent("xcuserdata")
-    var schemePaths: [String] = []
-
-    if let files = try? FileManager.default.contentsOfDirectory(atPath: sharedSchemesDir) {
-        schemePaths += files.filter { $0.hasSuffix(".xcscheme") }
-            .map { (sharedSchemesDir as NSString).appendingPathComponent($0) }
-    }
-    if let users = try? FileManager.default.contentsOfDirectory(atPath: userDataDir) {
-        for user in users where user.hasSuffix(".xcuserdatad") {
-            let dir = ((userDataDir as NSString).appendingPathComponent(user) as NSString)
-                .appendingPathComponent("xcschemes")
-            if let files = try? FileManager.default.contentsOfDirectory(atPath: dir) {
-                schemePaths += files.filter { $0.hasSuffix(".xcscheme") }
-                    .map { (dir as NSString).appendingPathComponent($0) }
-            }
-        }
-    }
-
-    for schemePath in schemePaths {
-        guard var content = try? String(contentsOfFile: schemePath, encoding: .utf8) else { continue }
-        guard content.contains("BTT Instrumentation") else { continue }
+func removePreActions(for target: String?, in xcodeprojPath: String, keepTargets: [String] = [], store: BTTTargetStore) -> Bool {
+    var removed = false
+    for schemePath in collectSchemePaths(in: xcodeprojPath) {
+        guard var content = try? String(contentsOfFile: schemePath, encoding: .utf8),
+              content.contains("BTT Instrumentation")
+        else { continue }
 
         if let target = target {
-            guard content.contains("BlueprintName = \"\(target)\"") else { continue }
-            // Keep pre-action if another instrumented target uses this same scheme
-            let stillNeeded = keepTargets.filter { content.contains("BlueprintName = \"\($0)\"") }
-            if !stillNeeded.isEmpty { continue }
-            // Remove BTTSwiftUITracker only if we added it — never touch manually added deps
+            guard content.contains("BlueprintName = \"\(target)\""),
+                  !keepTargets.contains(where: { content.contains("BlueprintName = \"\($0)\"") })
+            else { continue }
             removeBTTSwiftUITrackerDependency(xcodeprojPath: xcodeprojPath, targetName: target, store: store)
         }
 
-        content = removeBTTAction(from: content)
-        content = removeEmptyPreActions(from: content)
+        let cleaned = removeAction(from: content)
+        // If removeAction made no change, skip writing — avoids silent no-op touching files
+        guard cleaned != content else { continue }
+
+        content = removeEmptyPreActions(from: cleaned)
         try? content.write(toFile: schemePath, atomically: true, encoding: .utf8)
+        removed = true
     }
+    return removed
 }
 
 // MARK: - Private
-private func removeBTTAction(from content: String) -> String {
-    let startMarker = "         <ExecutionAction"
-    let titleMarker = "title = \"BTT Instrumentation\""
-    let endMarker   = "         </ExecutionAction>"
 
+private func buildAction(blueprintID: String, targetName: String, projName: String) -> String {
+    let script = "export PATH=&quot;$PATH:/usr/local/bin&quot;&#10;" +
+                 "export PATH=&quot;$PATH:/opt/homebrew/bin&quot;&#10;" +
+                 "if [[ ! -f &quot;$SRCROOT/.btt/btt_instrument.sh&quot; ]]; then exit 0; fi&#10;" +
+                 "bash &quot;$SRCROOT/.btt/btt_instrument.sh&quot;&#10;" +
+                 "exit $?&#10;"
+    return
+        "         <ExecutionAction\n" +
+        "            ActionType = \"Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction\">\n" +
+        "            <ActionContent\n" +
+        "               title = \"BTT Instrumentation\"\n" +
+        "               scriptText = \"\(script)\">\n" +
+        "               <EnvironmentBuildable>\n" +
+        "                  <BuildableReference\n" +
+        "                     BuildableIdentifier = \"primary\"\n" +
+        "                     BlueprintIdentifier = \"\(blueprintID)\"\n" +
+        "                     BuildableName = \"\(targetName).app\"\n" +
+        "                     BlueprintName = \"\(targetName)\"\n" +
+        "                     ReferencedContainer = \"container:\(projName).xcodeproj\">\n" +
+        "                  </BuildableReference>\n" +
+        "               </EnvironmentBuildable>\n" +
+        "            </ActionContent>\n" +
+        "         </ExecutionAction>\n"
+}
+
+private func insertAction(_ action: String, into content: String) -> String {
+    var c = content
+    if c.contains("      <PreActions>") {
+        c = c.replacingOccurrences(of: "      <PreActions>", with: "      <PreActions>\n" + action)
+    } else if let range = c.range(of: "<PreActions>") {
+        c.insert(contentsOf: "\n" + action, at: range.upperBound)
+    } else {
+        let block = "      <PreActions>\n" + action + "      </PreActions>\n"
+        c = c.replacingOccurrences(of: "      <BuildActionEntries>", with: block + "      <BuildActionEntries>")
+    }
+    return c
+}
+
+private func removeAction(from content: String) -> String {
     var lines = content.components(separatedBy: "\n")
-    var i     = 0
+    var i = 0
     while i < lines.count {
-        if lines[i].contains(startMarker) {
-            let lookahead = min(i + 5, lines.count - 1)
-            if lines[i...lookahead].joined(separator: "\n").contains(titleMarker) {
-                var j = i
-                while j < lines.count {
-                    if lines[j].contains(endMarker) { lines.removeSubrange(i...j); break }
-                    j += 1
-                }
-                continue
+        // Match opening tag loosely — any indentation
+        guard lines[i].contains("<ExecutionAction") else { i += 1; continue }
+
+        // Search far enough ahead for the title — BTT block can be 20+ lines
+        let lookahead = min(i + 25, lines.count - 1)
+        guard lines[i...lookahead].joined(separator: "\n").contains("title = \"BTT Instrumentation\"") else { i += 1; continue }
+
+        // Find the closing tag — match loosely regardless of indentation
+        var j = i + 1
+        while j < lines.count {
+            if lines[j].contains("</ExecutionAction>") {
+                lines.removeSubrange(i...j)
+                break
             }
+            j += 1
         }
-        i += 1
+        // Don't increment i — recheck same index after removal
     }
     return lines.joined(separator: "\n")
 }
@@ -268,14 +138,31 @@ private func removeEmptyPreActions(from content: String) -> String {
     return regex.stringByReplacingMatches(in: content, range: NSRange(content.startIndex..., in: content), withTemplate: "")
 }
 
+private func collectSchemePaths(in xcodeprojPath: String) -> [String] {
+    let sharedDir = (xcodeprojPath as NSString).appendingPathComponent("xcshareddata/xcschemes")
+    let userDir   = (xcodeprojPath as NSString).appendingPathComponent("xcuserdata")
+    var paths: [String] = []
+    if let files = try? FileManager.default.contentsOfDirectory(atPath: sharedDir) {
+        paths += files.filter { $0.hasSuffix(".xcscheme") }.map { (sharedDir as NSString).appendingPathComponent($0) }
+    }
+    if let users = try? FileManager.default.contentsOfDirectory(atPath: userDir) {
+        for user in users where user.hasSuffix(".xcuserdatad") {
+            let dir = ((userDir as NSString).appendingPathComponent(user) as NSString).appendingPathComponent("xcschemes")
+            if let files = try? FileManager.default.contentsOfDirectory(atPath: dir) {
+                paths += files.filter { $0.hasSuffix(".xcscheme") }.map { (dir as NSString).appendingPathComponent($0) }
+            }
+        }
+    }
+    return paths
+}
+
 private func extractBlueprintID(from content: String, targetName: String) -> String? {
     let lines = content.components(separatedBy: "\n")
     for (i, line) in lines.enumerated() {
         guard line.contains("BlueprintName = \"\(targetName)\"") else { continue }
         for j in stride(from: i, through: max(0, i - 5), by: -1) {
-            guard lines[j].contains("BlueprintIdentifier") else { continue }
             let parts = lines[j].components(separatedBy: "\"")
-            if parts.count >= 2 { return parts[1] }
+            if lines[j].contains("BlueprintIdentifier"), parts.count >= 2 { return parts[1] }
         }
     }
     return nil
