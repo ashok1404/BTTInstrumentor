@@ -68,6 +68,24 @@ func removePreActions(for target: String?, in xcodeprojPath: String, keepTargets
     return removed
 }
 
+func collectSchemePaths(in xcodeprojPath: String) -> [String] {
+    let sharedDir = (xcodeprojPath as NSString).appendingPathComponent("xcshareddata/xcschemes")
+    let userDir   = (xcodeprojPath as NSString).appendingPathComponent("xcuserdata")
+    var paths: [String] = []
+    if let files = try? FileManager.default.contentsOfDirectory(atPath: sharedDir) {
+        paths += files.filter { $0.hasSuffix(".xcscheme") }.map { (sharedDir as NSString).appendingPathComponent($0) }
+    }
+    if let users = try? FileManager.default.contentsOfDirectory(atPath: userDir) {
+        for user in users where user.hasSuffix(".xcuserdatad") {
+            let dir = ((userDir as NSString).appendingPathComponent(user) as NSString).appendingPathComponent("xcschemes")
+            if let files = try? FileManager.default.contentsOfDirectory(atPath: dir) {
+                paths += files.filter { $0.hasSuffix(".xcscheme") }.map { (dir as NSString).appendingPathComponent($0) }
+            }
+        }
+    }
+    return paths
+}
+
 // MARK: - Private
 
 private func buildAction(blueprintID: String, targetName: String, projName: String) -> String {
@@ -136,24 +154,6 @@ private func removeAction(from content: String) -> String {
 private func removeEmptyPreActions(from content: String) -> String {
     guard let regex = try? NSRegularExpression(pattern: "\\s*<PreActions>\\s*</PreActions>") else { return content }
     return regex.stringByReplacingMatches(in: content, range: NSRange(content.startIndex..., in: content), withTemplate: "")
-}
-
-private func collectSchemePaths(in xcodeprojPath: String) -> [String] {
-    let sharedDir = (xcodeprojPath as NSString).appendingPathComponent("xcshareddata/xcschemes")
-    let userDir   = (xcodeprojPath as NSString).appendingPathComponent("xcuserdata")
-    var paths: [String] = []
-    if let files = try? FileManager.default.contentsOfDirectory(atPath: sharedDir) {
-        paths += files.filter { $0.hasSuffix(".xcscheme") }.map { (sharedDir as NSString).appendingPathComponent($0) }
-    }
-    if let users = try? FileManager.default.contentsOfDirectory(atPath: userDir) {
-        for user in users where user.hasSuffix(".xcuserdatad") {
-            let dir = ((userDir as NSString).appendingPathComponent(user) as NSString).appendingPathComponent("xcschemes")
-            if let files = try? FileManager.default.contentsOfDirectory(atPath: dir) {
-                paths += files.filter { $0.hasSuffix(".xcscheme") }.map { (dir as NSString).appendingPathComponent($0) }
-            }
-        }
-    }
-    return paths
 }
 
 private func extractBlueprintID(from content: String, targetName: String) -> String? {

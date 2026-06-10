@@ -13,21 +13,44 @@ import XcodeProj
 let fm = FileManager.default
 
 // MARK: - Xcodeproj
-
-/// Finds .xcodeproj from args path or by searching rootPath up to 4 levels deep
+/// Finds .xcodeproj from args path or by searching rootPath up to 4 levels deep.
+/// If multiple are found and running interactively, prompts the user to pick one.
 func resolveXcodeproj(args: BTTArgs) -> String? {
     if let p = args.projectPath, fm.fileExists(atPath: p) { return p }
+
     guard let enumerator = fm.enumerator(
         at: URL(fileURLWithPath: args.rootPath),
         includingPropertiesForKeys: [.isDirectoryKey],
         options: [.skipsHiddenFiles]
     ) else { return nil }
+
+    var found: [String] = []
+    let rootDepth = URL(fileURLWithPath: args.rootPath).pathComponents.count
     for case let url as URL in enumerator {
-        let depth = url.pathComponents.count - URL(fileURLWithPath: args.rootPath).pathComponents.count
+        let depth = url.pathComponents.count - rootDepth
         if depth > 4 { enumerator.skipDescendants(); continue }
-        if url.pathExtension == "xcodeproj" { return url.path }
+        if url.pathExtension == "xcodeproj" { found.append(url.path) }
     }
-    return nil
+
+    switch found.count {
+    case 0: return nil
+    case 1: return found[0]
+    default:
+        // Non-interactive (scheme pre-action) — pick first, no prompt
+        if isatty(STDIN_FILENO) == 0 { return found[0] }
+
+        BTTLog.info("\nMultiple .xcodeproj files found. Which one do you want to use?\n")
+        found.enumerated().forEach { i, p in
+            BTTLog.info("\(i + 1). \(URL(fileURLWithPath: p).lastPathComponent) (\(p))")
+        }
+        BTTLog.info("\nEnter the number: ")
+
+        if let input = readLine()?.trimmingCharacters(in: .whitespaces),
+           let idx   = Int(input), (1...found.count).contains(idx) {
+            return found[idx - 1]
+        }
+        return found[0]
+    }
 }
 
 // MARK: - Targets

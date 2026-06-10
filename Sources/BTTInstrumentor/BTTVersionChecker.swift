@@ -47,6 +47,17 @@ func resolvedBTTVersion(xcodeprojPath: String) -> String? {
     return nil
 }
 
+func isVersion(_ a: String, atLeast b: String) -> Bool {
+    let av = a.components(separatedBy: ".").compactMap { Int($0) }
+    let bv = b.components(separatedBy: ".").compactMap { Int($0) }
+    for i in 0..<max(av.count, bv.count) {
+        let ai = i < av.count ? av[i] : 0
+        let bi = i < bv.count ? bv[i] : 0
+        if ai != bi { return ai > bi }
+    }
+    return true
+}
+
 private func parseBTTVersion(from path: String) -> String? {
     guard FileManager.default.fileExists(atPath: path),
           let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
@@ -68,17 +79,6 @@ private func parseBTTVersion(from path: String) -> String? {
         return (pin["state"] as? [String: Any])?["version"] as? String
     }
     return nil
-}
-
-private func isVersion(_ a: String, atLeast b: String) -> Bool {
-    let av = a.components(separatedBy: ".").compactMap { Int($0) }
-    let bv = b.components(separatedBy: ".").compactMap { Int($0) }
-    for i in 0..<max(av.count, bv.count) {
-        let ai = i < av.count ? av[i] : 0
-        let bi = i < bv.count ? bv[i] : 0
-        if ai != bi { return ai > bi }
-    }
-    return true
 }
 
 // MARK: - Update SPM package in xcodeproj
