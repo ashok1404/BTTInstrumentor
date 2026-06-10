@@ -67,23 +67,26 @@ final class BTTVersionChecker {
 
         switch readLine()?.trimmingCharacters(in: .whitespaces) ?? "3" {
         case "1":
-            guard let latest = fetchLatestVersion(),
-                  writeVersion(latest, to: xcodeprojPath) else {
-                BTTLog.error("Update failed — please update \(BTTConstants.bttProductName) manually to >= \(BTTConstants.minBTTVersion).")
+            guard let latest = fetchLatestVersion() else {
+                BTTLog.error("Could not fetch latest version from GitHub — check your internet connection.")
+                exit(1)
+            }
+            guard writeVersion(latest, to: xcodeprojPath) else {
+                BTTLog.error("Could not write version to project.pbxproj — update \(BTTConstants.bttProductName) manually to >= \(BTTConstants.minBTTVersion).")
                 exit(1)
             }
             BTTLog.success("✓ \(BTTConstants.bttProductName) updated to \(latest).")
-            BTTLog.info("Re-open Xcode to resolve the package, then re-run BTTInstrumentor.")
-            exit(0)
+            resolvePackages(projPath: xcodeprojPath)
+            return true
 
         case "2":
             guard writeVersion(BTTConstants.minBTTVersion, to: xcodeprojPath) else {
-                BTTLog.error("Update failed — please update \(BTTConstants.bttProductName) manually to >= \(BTTConstants.minBTTVersion).")
+                BTTLog.error("Could not write version to project.pbxproj — update \(BTTConstants.bttProductName) manually to >= \(BTTConstants.minBTTVersion).")
                 exit(1)
             }
             BTTLog.success("✓ \(BTTConstants.bttProductName) updated to >= \(BTTConstants.minBTTVersion).")
-            BTTLog.info("Re-open Xcode to resolve the package, then re-run BTTInstrumentor.")
-            exit(0)
+            resolvePackages(projPath: xcodeprojPath)
+            return true
 
         default:
             BTTLog.warn("Instrumentation cancelled.")
@@ -128,9 +131,10 @@ final class BTTVersionChecker {
     }
 
     private func fetchLatestVersion() -> String? {
-        guard let url = URL(string: BTTConstants.bttPackageURL
-            .replacingOccurrences(of: "https://github.com/", with: "https://api.github.com/repos/")
-            .replacingOccurrences(of: ".git", with: "/releases/latest"))
+        let slug = BTTConstants.bttPackageURL
+            .replacingOccurrences(of: "https://github.com/", with: "")
+            .replacingOccurrences(of: ".git", with: "")
+        guard let url = URL(string: "https://api.github.com/repos/\(slug)/releases/latest")
         else { return nil }
 
         var request = URLRequest(url: url, timeoutInterval: BTTConstants.gitHubRequestTimeout)
@@ -163,6 +167,24 @@ final class BTTVersionChecker {
         guard updated else { return false }
         try? xcodeproj.write(path: Path(projPath))
         return true
+    }
+
+    private func resolvePackages(projPath: String) {
+        let task = Process()
+        task.launchPath     = "/usr/bin/xcrun"
+        task.arguments      = ["xcodebuild", "-resolvePackageDependencies", "-project", projPath]
+        task.standardOutput = Pipe()
+        task.standardError  = Pipe()
+        guard (try? task.run()) != nil else {
+            BTTLog.info("Open Xcode to resolve package dependencies.")
+            return
+        }
+        task.waitUntilExit()
+        if task.terminationStatus == 0 {
+            BTTLog.success("✓ Package dependencies resolved.")
+        } else {
+            BTTLog.info("Open Xcode to resolve package dependencies.")
+        }
     }
 }
 #endif

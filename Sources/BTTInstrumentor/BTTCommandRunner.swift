@@ -283,9 +283,9 @@ final class BTTCommandRunner {
 
     /// Checks the BTT SDK version gate; exits if the user decides not to proceed.
     private func requireBTTVersion(xcodeprojPath: String) {
-        /*guard BTTVersionChecker(xcodeprojPath: xcodeprojPath).checkAndProceed() else {
+        guard BTTVersionChecker(xcodeprojPath: xcodeprojPath).checkAndProceed() else {
             exit(0)
-        }*/
+        }
     }
 
     /// Prompts the user to pick a target and returns the selection.
