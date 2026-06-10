@@ -7,8 +7,6 @@
 
 #if os(macOS)
 import Foundation
-import PathKit
-import XcodeProj
 
 final class BTTVersionChecker {
     private let xcodeprojPath: String
@@ -37,14 +35,13 @@ final class BTTVersionChecker {
         return candidates.lazy.compactMap { self.parseVersion(from: $0) }.first
     }
 
-    /// Checks the resolved version and interactively prompts the user when it is too old.
-    /// Returns `true` if instrumentation should proceed, `false` if the SDK is not found.
-    /// Calls `exit` when the user chooses to update or quit.
+    /// Checks the resolved version and returns `true` if instrumentation should proceed.
+    /// Exits with a clear message if the SDK is missing or version is too old.
     @discardableResult
     func checkAndProceed() -> Bool {
         guard let version = resolvedVersion() else {
             BTTLog.error("Could not find \(BTTConstants.bttProductName) SDK — please add it before proceeding.")
-            return false
+            return BTTConstants.isForkedVersion ? true : false
         }
 
         guard !Self.isVersion(version, atLeast: BTTConstants.minBTTVersion) else {
@@ -52,49 +49,15 @@ final class BTTVersionChecker {
             return true
         }
 
-        // Version too old — offer options
         BTTLog.error(
-            "\(BTTConstants.bttProductName) \(version) does not support screen auto-tracking " +
-            "(requires >= \(BTTConstants.minBTTVersion))."
+            "\(BTTConstants.bttProductName) \(version) does not support SwiftUI screen auto-tracking. " +
+            "Please update to >= \(BTTConstants.minBTTVersion) in Xcode (File → Packages → Update to Latest Package Versions), then re-run BTTInstrumentor."
         )
-        BTTLog.info(
-            "\nHow would you like to proceed?\n" +
-            "  1. Update to the latest release\n" +
-            "  2. Update to minimum required version (\(BTTConstants.minBTTVersion))\n" +
-            "  3. No — quit\n\n" +
-            "Enter 1, 2, or 3: "
-        )
-
-        switch readLine()?.trimmingCharacters(in: .whitespaces) ?? "3" {
-        case "1":
-            guard let latest = fetchLatestVersion() else {
-                BTTLog.error("Could not fetch latest version from GitHub — check your internet connection.")
-                exit(1)
-            }
-            guard writeVersion(latest, to: xcodeprojPath) else {
-                BTTLog.error("Could not write version to project.pbxproj — update \(BTTConstants.bttProductName) manually to >= \(BTTConstants.minBTTVersion).")
-                exit(1)
-            }
-            BTTLog.success("✓ \(BTTConstants.bttProductName) updated to \(latest).")
-            resolvePackages(projPath: xcodeprojPath)
-            return true
-
-        case "2":
-            guard writeVersion(BTTConstants.minBTTVersion, to: xcodeprojPath) else {
-                BTTLog.error("Could not write version to project.pbxproj — update \(BTTConstants.bttProductName) manually to >= \(BTTConstants.minBTTVersion).")
-                exit(1)
-            }
-            BTTLog.success("✓ \(BTTConstants.bttProductName) updated to >= \(BTTConstants.minBTTVersion).")
-            resolvePackages(projPath: xcodeprojPath)
-            return true
-
-        default:
-            BTTLog.warn("Instrumentation cancelled.")
-            exit(0)
-        }
+        return BTTConstants.isForkedVersion ? true : false
     }
 
-    // MARK: - Version comparison (static utility)
+    // MARK: - Version comparison
+
     static func isVersion(_ a: String, atLeast b: String) -> Bool {
         let av = a.components(separatedBy: ".").compactMap { Int($0) }
         let bv = b.components(separatedBy: ".").compactMap { Int($0) }
@@ -107,6 +70,7 @@ final class BTTVersionChecker {
     }
 
     // MARK: - Private
+
     private func parseVersion(from path: String) -> String? {
         guard FileManager.default.fileExists(atPath: path),
               let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
@@ -128,63 +92,6 @@ final class BTTVersionChecker {
             return (pin["state"] as? [String: Any])?["version"] as? String
         }
         return nil
-    }
-
-    private func fetchLatestVersion() -> String? {
-        let slug = BTTConstants.bttPackageURL
-            .replacingOccurrences(of: "https://github.com/", with: "")
-            .replacingOccurrences(of: ".git", with: "")
-        guard let url = URL(string: "https://api.github.com/repos/\(slug)/releases/latest")
-        else { return nil }
-
-        var request = URLRequest(url: url, timeoutInterval: BTTConstants.gitHubRequestTimeout)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-
-        var result: String?
-        let sem = DispatchSemaphore(value: 0)
-        URLSession.shared.dataTask(with: request) { data, _, _ in
-            defer { sem.signal() }
-            guard let data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let tag  = json["tag_name"] as? String
-            else { return }
-            result = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
-        }.resume()
-        sem.wait()
-        return result
-    }
-
-    private func writeVersion(_ version: String, to projPath: String) -> Bool {
-        guard let xcodeproj = try? XcodeProj(path: Path(projPath)) else { return false }
-        let normalized = BTTConstants.bttPackageURL.lowercased().replacingOccurrences(of: ".git", with: "")
-        var updated = false
-        for ref in xcodeproj.pbxproj.rootObject?.remotePackages ?? [] {
-            let url = (ref.repositoryURL ?? "").lowercased().replacingOccurrences(of: ".git", with: "")
-            guard url == normalized else { continue }
-            ref.versionRequirement = .upToNextMajorVersion(version)
-            updated = true
-        }
-        guard updated else { return false }
-        try? xcodeproj.write(path: Path(projPath))
-        return true
-    }
-
-    private func resolvePackages(projPath: String) {
-        let task = Process()
-        task.launchPath     = "/usr/bin/xcrun"
-        task.arguments      = ["xcodebuild", "-resolvePackageDependencies", "-project", projPath]
-        task.standardOutput = Pipe()
-        task.standardError  = Pipe()
-        guard (try? task.run()) != nil else {
-            BTTLog.info("Open Xcode to resolve package dependencies.")
-            return
-        }
-        task.waitUntilExit()
-        if task.terminationStatus == 0 {
-            BTTLog.success("✓ Package dependencies resolved.")
-        } else {
-            BTTLog.info("Open Xcode to resolve package dependencies.")
-        }
     }
 }
 #endif

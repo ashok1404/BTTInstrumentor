@@ -8,11 +8,9 @@
 import Foundation
 
 enum BTTConstants {
-
     // MARK: - SDK
-    static let minBTTVersion        = "3.15.12"
-    static let bttPackageURL        = "https://github.com/blue-triangle-tech/btt-swift-sdk.git"
-    static let gitHubRequestTimeout: TimeInterval = 60
+    static let minBTTVersion        = "3.15.13"
+    static let isForkedVersion      =  true
 
     // MARK: - Package product names
     static let bttProductName            = "BlueTriangle"

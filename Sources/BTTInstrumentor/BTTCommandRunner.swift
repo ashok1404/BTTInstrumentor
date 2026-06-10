@@ -53,7 +53,7 @@ final class BTTCommandRunner {
 
         let xcodeprojPath = requireXcodeproj()
         requireBTTVersion(xcodeprojPath: xcodeprojPath)
-
+        
         let projectDir = (xcodeprojPath as NSString).deletingLastPathComponent
         let store      = BTTTargetStore(projectDir: projectDir)
         let selected   = promptTargetSelection(xcodeprojPath: xcodeprojPath, store: store)
