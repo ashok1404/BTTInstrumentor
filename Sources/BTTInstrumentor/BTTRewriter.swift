@@ -9,62 +9,65 @@ import SwiftSyntax
 import SwiftParser
 import SwiftSyntaxBuilder
 
+/// injects `@BTTTrack` above every SwiftUI `View
+/// Also inserts `import BTTSwiftUITracker` after `import SwiftUI` when at least one
 final class BTTRewriter: SyntaxRewriter {
 
+    // MARK: - State
     var injectedCount = 0
+    // MARK: - Source file
 
-    // Source file level — add import BTTSwiftUITracker after import SwiftUI
     override func visit(_ node: SourceFileSyntax) -> SourceFileSyntax {
-        // First let super visit all children (including structs)
+        // Visit children first so injectedCount is accurate before we add the import
         let visited = super.visit(node)
-
-        // Then add import BlueTriangle if needed
         guard injectedCount > 0 else { return visited }
 
+        // Skip if import already present
         guard !visited.statements.contains(where: { stmt in
             guard let d = stmt.item.as(ImportDeclSyntax.self) else { return false }
-            return d.path.trimmedDescription == "BTTSwiftUITracker"
+            return d.path.trimmedDescription == BTTConstants.importModule
         }) else { return visited }
 
         let bttImport = ImportDeclSyntax(
             leadingTrivia: .newline,
             importKeyword: .keyword(.import, trailingTrivia: .space),
             path: ImportPathComponentListSyntax([
-                ImportPathComponentSyntax(name: .identifier("BTTSwiftUITracker"))
+                ImportPathComponentSyntax(name: .identifier(BTTConstants.importModule))
             ])
         )
 
         var statements = Array(visited.statements)
-        guard let swiftUIInt = statements.firstIndex(where: { stmt in
+        guard let swiftUIIdx = statements.firstIndex(where: { stmt in
             guard let d = stmt.item.as(ImportDeclSyntax.self) else { return false }
             return d.path.trimmedDescription == "SwiftUI"
         }) else { return visited }
 
         statements.insert(
             CodeBlockItemSyntax(item: .decl(DeclSyntax(bttImport))),
-            at: swiftUIInt + 1
+            at: swiftUIIdx + 1
         )
         return visited.with(\.statements, CodeBlockItemListSyntax(statements))
     }
 
-    // Struct level — add @BTTTrack above View structs
+    // MARK: - Struct
+
     override func visit(_ node: StructDeclSyntax) -> DeclSyntax {
-        guard conformsToView(node) else { return DeclSyntax(node) }
-        guard hasBodyProperty(node) else { return DeclSyntax(node) }
-        guard !hasAttribute("BTTTrack", in: node) else { return DeclSyntax(node) }
-        guard !hasBTTIgnore(node) else { return DeclSyntax(node) }
+        guard conformsToView(node)                    else { return DeclSyntax(node) }
+        guard hasBodyProperty(node)                   else { return DeclSyntax(node) }
+        guard !hasAttribute(BTTConstants.trackAttribute, in: node) else { return DeclSyntax(node) }
+        guard !hasBTTIgnore(node)                     else { return DeclSyntax(node) }
 
         let attrSyntax = AttributeSyntax(
             atSign: .atSignToken(),
-            attributeName: IdentifierTypeSyntax(name: .identifier("BTTTrack")),
+            attributeName: IdentifierTypeSyntax(name: .identifier(BTTConstants.trackAttribute)),
             trailingTrivia: .newline
         )
 
-        let leadingTrivia = node.leadingTrivia
-        let strippedNode = node.with(\.leadingTrivia, .spaces(0))
+        let leadingTrivia  = node.leadingTrivia
+        let strippedNode   = node.with(\.leadingTrivia, .spaces(0))
         let attrWithTrivia = attrSyntax.with(\.leadingTrivia, leadingTrivia)
-        let newAttr = AttributeListSyntax([.attribute(attrWithTrivia)])
-        var modified = strippedNode
+        let newAttr        = AttributeListSyntax([.attribute(attrWithTrivia)])
+        var modified       = strippedNode
 
         if node.attributes.isEmpty {
             modified = strippedNode.with(\.attributes, newAttr)
@@ -77,6 +80,8 @@ final class BTTRewriter: SyntaxRewriter {
         injectedCount += 1
         return DeclSyntax(modified)
     }
+
+    // MARK: - Private
 
     private func conformsToView(_ node: StructDeclSyntax) -> Bool {
         node.inheritanceClause?.inheritedTypes.contains {
@@ -99,6 +104,6 @@ final class BTTRewriter: SyntaxRewriter {
     }
 
     private func hasBTTIgnore(_ node: StructDeclSyntax) -> Bool {
-        node.leadingTrivia.description.contains("btt:ignore")
+        node.leadingTrivia.description.contains(BTTConstants.ignoreComment)
     }
 }

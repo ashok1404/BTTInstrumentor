@@ -9,6 +9,8 @@
 import Foundation
 
 enum BTTLog {
+
+    // MARK: - Private
     private static let isTTY  = isatty(STDOUT_FILENO) != 0
     private static let reset  = isTTY ? "\u{001B}[0m"    : ""
     private static let green  = isTTY ? "\u{001B}[0;32m" : ""
@@ -16,6 +18,7 @@ enum BTTLog {
     private static let red    = isTTY ? "\u{001B}[0;31m" : ""
     private static let cyan   = isTTY ? "\u{001B}[0;36m" : ""
 
+    // MARK: - Public
     static func info(_ msg: String)    { print("\(cyan)\(msg)\(reset)") }
     static func success(_ msg: String) { print("\(green)\(msg)\(reset)") }
     static func warn(_ msg: String)    { print("\(yellow)warning: \(msg)\(reset)") }
