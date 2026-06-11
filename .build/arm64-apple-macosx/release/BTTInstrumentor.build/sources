@@ -1,10 +1,8 @@
 /Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTArgs.swift
 /Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTBuildPhase.swift
-/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTCommandHandler.swift
-/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTCommandHelper.swift
 /Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTCommandRunner.swift
 /Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTConstants.swift
-/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTInjector.swift
+/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTInjectRevertHandler.swift
 /Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTLog.swift
 /Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTPackageDependency.swift
 /Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTProjectResolver.swift

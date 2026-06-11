@@ -13,16 +13,11 @@ import SwiftSyntaxBuilder
 /// Also inserts `import BTTSwiftUITracker` after `import SwiftUI` when at least one
 /// struct was instrumented.
 final class BTTRewriter: SyntaxRewriter {
-    var injectedCount = 0
+    var injectedViews = [String]()
 
     override func visit(_ node: SourceFileSyntax) -> SourceFileSyntax {
-        // Visit children first so injectedCount is accurate before we add the import
         let visited = super.visit(node)
-
-        BTTLog.verbose("  BTTRewriter.visit(SourceFileSyntax) — injectedCount after child visit: \(injectedCount)")
-
-        guard injectedCount > 0 else {
-            BTTLog.verbose("  No Views injected — skipping import insertion.")
+        guard injectedViews.count > 0 else {
             return visited
         }
 
@@ -32,7 +27,6 @@ final class BTTRewriter: SyntaxRewriter {
             return d.path.trimmedDescription == BTTConstants.importModule
         })
         if alreadyImported {
-            BTTLog.verbose("  import \(BTTConstants.importModule) already present — skipping insertion.")
             return visited
         }
 
@@ -49,11 +43,9 @@ final class BTTRewriter: SyntaxRewriter {
             guard let d = stmt.item.as(ImportDeclSyntax.self) else { return false }
             return d.path.trimmedDescription == "SwiftUI"
         }) else {
-            BTTLog.verbose("  import SwiftUI not found — cannot insert import \(BTTConstants.importModule).")
             return visited
         }
 
-        BTTLog.verbose("  Inserting import \(BTTConstants.importModule) after import SwiftUI at index \(swiftUIIdx).")
         statements.insert(
             CodeBlockItemSyntax(item: .decl(DeclSyntax(bttImport))),
             at: swiftUIIdx + 1
@@ -65,23 +57,14 @@ final class BTTRewriter: SyntaxRewriter {
         let name = node.name.text
 
         guard conformsToView(node) else {
-            BTTLog.verbose("    '\(name)': does not conform to View — skip")
             return DeclSyntax(node)
         }
         guard hasBodyProperty(node) else {
-            BTTLog.verbose("    '\(name)': conforms to View but no 'body' property — skip (likely protocol extension)")
             return DeclSyntax(node)
         }
         if hasAttribute(BTTConstants.trackAttribute, in: node) {
-            BTTLog.verbose("    '\(name)': already has @\(BTTConstants.trackAttribute) — skip")
             return DeclSyntax(node)
         }
-        if hasBTTIgnore(node) {
-            BTTLog.verbose("    '\(name)': has // \(BTTConstants.ignoreComment) — skip")
-            return DeclSyntax(node)
-        }
-
-        BTTLog.verbose("    '\(name)': injecting @\(BTTConstants.trackAttribute) ✓")
 
         let attrSyntax = AttributeSyntax(
             atSign: .atSignToken(),
@@ -103,12 +86,11 @@ final class BTTRewriter: SyntaxRewriter {
             modified = strippedNode.with(\.attributes, combined)
         }
 
-        injectedCount += 1
+        injectedViews.append(name)
         return DeclSyntax(modified)
     }
 
     // MARK: - Private
-
     private func conformsToView(_ node: StructDeclSyntax) -> Bool {
         node.inheritanceClause?.inheritedTypes.contains {
             $0.type.trimmedDescription == "View"
@@ -127,9 +109,5 @@ final class BTTRewriter: SyntaxRewriter {
             guard case .attribute(let a) = attr else { return false }
             return a.attributeName.trimmedDescription == name
         }
-    }
-
-    private func hasBTTIgnore(_ node: StructDeclSyntax) -> Bool {
-        node.leadingTrivia.description.contains(BTTConstants.ignoreComment)
     }
 }

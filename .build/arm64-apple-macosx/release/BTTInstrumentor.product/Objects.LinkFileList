@@ -6,11 +6,9 @@
 /Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/AEXML.build/Parser.swift.o
 /Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTArgs.swift.o
 /Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTBuildPhase.swift.o
-/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTCommandHandler.swift.o
-/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTCommandHelper.swift.o
 /Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTCommandRunner.swift.o
 /Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTConstants.swift.o
-/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTInjector.swift.o
+/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTInjectRevertHandler.swift.o
 /Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTLog.swift.o
 /Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTPackageDependency.swift.o
 /Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTProjectResolver.swift.o
