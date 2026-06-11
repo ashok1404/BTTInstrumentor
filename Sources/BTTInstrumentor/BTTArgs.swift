@@ -8,16 +8,12 @@
 import Foundation
 
 struct BTTArgs {
-
-    // MARK: - Properties
-
     var command:     String  = ""
     var projectPath: String? = nil
     var target:      String? = nil
     var scheme:      String? = nil
+    var verbose:     Bool    = false
     var rootPath:    String  = FileManager.default.currentDirectoryPath
-
-    // MARK: - Factory
 
     /// Parses CommandLine.arguments and returns a populated BTTArgs value.
     static func parse() -> BTTArgs {
@@ -35,6 +31,9 @@ struct BTTArgs {
 
             case "--scheme":
                 if i + 1 < remaining.count { result.scheme = remaining[i + 1]; i += 1 }
+
+            case "--verbose":
+                result.verbose = true
 
             default:
                 guard !remaining[i].hasPrefix("--") else { break }

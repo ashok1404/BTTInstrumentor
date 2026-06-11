@@ -51,23 +51,31 @@ enum BTTConstants {
     static let rootPackageResolved = "Package.resolved"
 
     // MARK: - Help text
+    // MARK: - Help text
     static let helpText = """
-    BTTInstrumentor — BlueTriangle SwiftUI Screen Tracking
-    USAGE
-      BTTInstrumentor install    [project.xcodeproj]
-      BTTInstrumentor instrument [project.xcodeproj]
-      BTTInstrumentor uninstall  [project.xcodeproj]
-      BTTInstrumentor check      [project.xcodeproj]
 
-    COMMANDS
-      install     Adds scheme pre-action and saves target (no injection)
-      instrument  Injects @BTTTrack into SwiftUI views immediately
-      uninstall   Removes instrumentation for a target or full clean up
-      check       Verifies all setup steps with ✓ / ✗ status
+        BTTInstrumentor — BlueTriangle SwiftUI Screen Tracking
 
-    EXAMPLE
-      cd MyApp && BTTInstrumentor install
-      cd MyApp && BTTInstrumentor instrument
-      cd MyApp && BTTInstrumentor uninstall
-    """
+        USAGE
+          BTTInstrumentor install    [project.xcodeproj] [--target <name>] [--verbose]
+          BTTInstrumentor instrument [project.xcodeproj] [--target <name>] [--verbose]
+          BTTInstrumentor uninstall  [project.xcodeproj] [--verbose]
+          BTTInstrumentor check      [project.xcodeproj] [--verbose]
+
+        COMMANDS
+          install     Adds scheme pre-action and saves target (no injection)
+          instrument  Injects @BTTTrack into SwiftUI views immediately
+          uninstall   Removes instrumentation for a target or full clean up
+          check       Verifies all setup steps with ✓ / ✗ status
+
+        OPTIONS
+          --target <name>   Target to instrument (skips interactive prompt)
+          --verbose         Bakes verbose logging into the scheme pre-action script
+
+        EXAMPLE
+          cd MyApp && BTTInstrumentor install
+          cd MyApp && BTTInstrumentor install --target MyApp --verbose
+          cd MyApp && BTTInstrumentor instrument --target MyApp
+          cd MyApp && BTTInstrumentor uninstall
+        """
 }

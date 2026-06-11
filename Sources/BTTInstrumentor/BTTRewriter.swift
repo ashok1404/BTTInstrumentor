@@ -9,24 +9,32 @@ import SwiftSyntax
 import SwiftParser
 import SwiftSyntaxBuilder
 
-/// injects `@BTTTrack` above every SwiftUI `View
+/// Injects `@BTTTrack` above every SwiftUI `View`.
 /// Also inserts `import BTTSwiftUITracker` after `import SwiftUI` when at least one
+/// struct was instrumented.
 final class BTTRewriter: SyntaxRewriter {
-
-    // MARK: - State
     var injectedCount = 0
-    // MARK: - Source file
 
     override func visit(_ node: SourceFileSyntax) -> SourceFileSyntax {
         // Visit children first so injectedCount is accurate before we add the import
         let visited = super.visit(node)
-        guard injectedCount > 0 else { return visited }
+
+        BTTLog.verbose("  BTTRewriter.visit(SourceFileSyntax) — injectedCount after child visit: \(injectedCount)")
+
+        guard injectedCount > 0 else {
+            BTTLog.verbose("  No Views injected — skipping import insertion.")
+            return visited
+        }
 
         // Skip if import already present
-        guard !visited.statements.contains(where: { stmt in
+        let alreadyImported = visited.statements.contains(where: { stmt in
             guard let d = stmt.item.as(ImportDeclSyntax.self) else { return false }
             return d.path.trimmedDescription == BTTConstants.importModule
-        }) else { return visited }
+        })
+        if alreadyImported {
+            BTTLog.verbose("  import \(BTTConstants.importModule) already present — skipping insertion.")
+            return visited
+        }
 
         let bttImport = ImportDeclSyntax(
             leadingTrivia: .newline,
@@ -40,8 +48,12 @@ final class BTTRewriter: SyntaxRewriter {
         guard let swiftUIIdx = statements.firstIndex(where: { stmt in
             guard let d = stmt.item.as(ImportDeclSyntax.self) else { return false }
             return d.path.trimmedDescription == "SwiftUI"
-        }) else { return visited }
+        }) else {
+            BTTLog.verbose("  import SwiftUI not found — cannot insert import \(BTTConstants.importModule).")
+            return visited
+        }
 
+        BTTLog.verbose("  Inserting import \(BTTConstants.importModule) after import SwiftUI at index \(swiftUIIdx).")
         statements.insert(
             CodeBlockItemSyntax(item: .decl(DeclSyntax(bttImport))),
             at: swiftUIIdx + 1
@@ -49,13 +61,27 @@ final class BTTRewriter: SyntaxRewriter {
         return visited.with(\.statements, CodeBlockItemListSyntax(statements))
     }
 
-    // MARK: - Struct
-
     override func visit(_ node: StructDeclSyntax) -> DeclSyntax {
-        guard conformsToView(node)                    else { return DeclSyntax(node) }
-        guard hasBodyProperty(node)                   else { return DeclSyntax(node) }
-        guard !hasAttribute(BTTConstants.trackAttribute, in: node) else { return DeclSyntax(node) }
-        guard !hasBTTIgnore(node)                     else { return DeclSyntax(node) }
+        let name = node.name.text
+
+        guard conformsToView(node) else {
+            BTTLog.verbose("    '\(name)': does not conform to View — skip")
+            return DeclSyntax(node)
+        }
+        guard hasBodyProperty(node) else {
+            BTTLog.verbose("    '\(name)': conforms to View but no 'body' property — skip (likely protocol extension)")
+            return DeclSyntax(node)
+        }
+        if hasAttribute(BTTConstants.trackAttribute, in: node) {
+            BTTLog.verbose("    '\(name)': already has @\(BTTConstants.trackAttribute) — skip")
+            return DeclSyntax(node)
+        }
+        if hasBTTIgnore(node) {
+            BTTLog.verbose("    '\(name)': has // \(BTTConstants.ignoreComment) — skip")
+            return DeclSyntax(node)
+        }
+
+        BTTLog.verbose("    '\(name)': injecting @\(BTTConstants.trackAttribute) ✓")
 
         let attrSyntax = AttributeSyntax(
             atSign: .atSignToken(),

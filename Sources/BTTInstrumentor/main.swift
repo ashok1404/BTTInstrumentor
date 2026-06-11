@@ -5,7 +5,9 @@
 //  Created by Ashok Singh on 04/06/26.
 //
 
+
 import Foundation
 
-let bttCommand = BTTCommandRunner(args: BTTArgs.parse())
-bttCommand.run()
+let args = BTTArgs.parse()
+let command = BTTCommandRunner(args: args)
+command.run()
