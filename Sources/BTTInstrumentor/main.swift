@@ -9,5 +9,5 @@
 import Foundation
 
 let args = BTTArgs.parse()
-let command = BTTCommandRunner(args: args)
-command.run()
+let runner = BTTRunner(args: args)
+runner.run()

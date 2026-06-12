@@ -20,50 +20,56 @@ final class BTTProjectResolver {
         self.args = args
     }
 
-    /// Finds the .xcodeproj from args or by searching `rootPath` up to
-    /// BTTConstants.xcodeprojSearchDepth` levels deep.
-    /// Prompts the user to pick one when multiple projects are found (interactive only).
+    // MARK: - Xcodeproj resolution
+    /// Finds the .xcodeproj to operate on.
     func resolveXcodeproj() -> String? {
         if let p = args.projectPath, fm.fileExists(atPath: p) { return p }
-
-        guard let enumerator = fm.enumerator(
-            at: URL(fileURLWithPath: args.rootPath),
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else { return nil }
-
-        var found: [String] = []
-        let rootDepth = URL(fileURLWithPath: args.rootPath).pathComponents.count
-
-        for case let url as URL in enumerator {
-            let depth = url.pathComponents.count - rootDepth
-            if depth > BTTConstants.xcodeprojSearchDepth { enumerator.skipDescendants(); continue }
-            if url.pathExtension == "xcodeproj" { found.append(url.path) }
-        }
-
-        BTTLog.verbose("Found \(found.count) .xcodeproj file(s) in \(args.rootPath)")
+        let found = discoverXcodeprojPaths()
+        
         switch found.count {
         case 0: return nil
-        case 1: BTTLog.verbose("Using: \(found[0])"); return found[0]
+        case 1: return found[0]
         default:
-            // Non-interactive (scheme pre-action) — pick first without prompting
-            guard isatty(STDIN_FILENO) != 0 else { return found[0] }
-
-            BTTLog.info("\nMultiple .xcodeproj files found. Which one do you want to use?\n")
-            found.enumerated().forEach { i, p in
-                BTTLog.info("\(i + 1). \(URL(fileURLWithPath: p).lastPathComponent) (\(p))")
-            }
-            BTTLog.info("\nEnter the number: ")
-
-            if let input = readLine()?.trimmingCharacters(in: .whitespaces),
-               let idx   = Int(input),
-               (1...found.count).contains(idx) {
-                return found[idx - 1]
-            }
-            return found[0]
+            guard isatty(STDIN_FILENO) != 0 else { return resolveNonInteractive(from: found) }
+            return resolveInteractive(from: found)
         }
     }
 
+    // MARK: - Non-interactive resolution
+    private func resolveNonInteractive(from found: [String]) -> String {
+        let rootPath = args.rootPath
+        let directChildren = found.filter { ($0 as NSString).deletingLastPathComponent == rootPath }
+        if !directChildren.isEmpty {
+            if directChildren.count == 1 { return directChildren[0] }
+            
+            let store = BTTTargetStore(projectDir: rootPath)
+            if let saved = store.savedXcodeprojPath(),
+               directChildren.contains(saved),
+               fm.fileExists(atPath: saved) {
+                return saved
+            }
+            return directChildren[0]
+        }
+        return found[0]
+    }
+
+    // MARK: - Interactive resolution
+    private func resolveInteractive(from found: [String]) -> String {
+        BTTLog.prompt("\nMultiple .xcodeproj files found. Which one do you want to use?\n")
+        found.enumerated().forEach { i, p in
+            BTTLog.prompt("\(i + 1). \(URL(fileURLWithPath: p).lastPathComponent) (\(p))")
+        }
+        BTTLog.prompt("\nEnter the number: ")
+
+        if let input = readLine()?.trimmingCharacters(in: .whitespaces),
+           let idx   = Int(input),
+           (1...found.count).contains(idx) {
+            return found[idx - 1]
+        }
+        return found[0]
+    }
+
+    // MARK: - Targets
     /// Returns all target names from `xcodebuild -list`.
     func getTargets(in xcodeprojPath: String) -> [String] {
         var targets   = [String]()
@@ -78,7 +84,6 @@ final class BTTProjectResolver {
             if trimmed.hasSuffix(":") { break }
             if seen.insert(trimmed).inserted { targets.append(trimmed) }
         }
-        BTTLog.verbose("Targets found (\(targets.count)): \(targets.joined(separator: ", "))")
         return targets
     }
 
@@ -103,11 +108,28 @@ final class BTTProjectResolver {
             let targetFolder = (projDir as NSString).appendingPathComponent(target)
             if fm.fileExists(atPath: targetFolder) { add(scanSwiftFiles(in: targetFolder)) }
         }
-        BTTLog.verbose("Swift files resolved (\(files.count)) for target: \(target)")
         return files
     }
 
-    // MARK: - Private
+    // MARK: - Private helpers
+    private func discoverXcodeprojPaths() -> [String] {
+        guard let enumerator = fm.enumerator(
+            at: URL(fileURLWithPath: args.rootPath),
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var found: [String] = []
+        let rootDepth = URL(fileURLWithPath: args.rootPath).pathComponents.count
+
+        for case let url as URL in enumerator {
+            let depth = url.pathComponents.count - rootDepth
+            if depth > BTTConstants.xcodeprojSearchDepth { enumerator.skipDescendants(); continue }
+            if url.pathExtension == "xcodeproj" { found.append(url.path) }
+        }
+        return found
+    }
+
     private func sourceFileRefs(for target: String, in xcodeprojPath: String) -> [String] {
         let projDir = Path(xcodeprojPath).parent()
         guard let proj    = try? XcodeProj(path: Path(xcodeprojPath)),
@@ -145,10 +167,10 @@ final class BTTProjectResolver {
 
         for line in runXcodebuildList(for: projPath).components(separatedBy: "\n") {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed == "Resolved source packages:"              { inSection = true; continue }
-            if trimmed.hasPrefix("Information about project")      { break }
+            if trimmed == "Resolved source packages:"         { inSection = true; continue }
+            if trimmed.hasPrefix("Information about project") { break }
             guard inSection, !trimmed.isEmpty,
-                  let separator = trimmed.range(of: ": ")          else { continue }
+                  let separator = trimmed.range(of: ": ")     else { continue }
 
             let name = String(trimmed[trimmed.startIndex..<separator.lowerBound])
             let path = String(trimmed[separator.upperBound...])

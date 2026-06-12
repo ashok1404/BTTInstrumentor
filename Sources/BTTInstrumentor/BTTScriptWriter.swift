@@ -8,6 +8,24 @@
 #if os(macOS)
 import Foundation
 
+/// Outcome of a write/copy operation that may be skipped, performed, or fail.
+enum BTTWriteResult {
+    case unchanged
+    case written
+    case failed(reason: String)
+    var succeeded: Bool {
+        switch self {
+        case .unchanged, .written: return true
+        case .failed:return false
+        }
+    }
+    
+    var wasWritten: Bool {
+        if case .written = self { return true }
+        return false
+    }
+}
+
 final class BTTScriptWriter {
     private let projectDir: String
     private let fm = FileManager.default
@@ -20,76 +38,69 @@ final class BTTScriptWriter {
     // MARK: - Public
 
     /// Writes `btt_instrument.sh` into the `.btt` folder with executable permissions.
-    /// If `--verbose` was passed at install time, it is baked directly into the script
-    /// so every subsequent Xcode build also runs verbose — no marker file needed.
-    func writeInstrumentScript() {
+    /// The script calls `instrument` (the internal command) so Xcode pre-action builds
+    /// never trigger the interactive `install` flow.
+    @discardableResult
+    func writeInstrumentScript() -> BTTWriteResult {
         let scriptPath  = (bttDir as NSString).appendingPathComponent(BTTConstants.scriptFileName)
         let verboseFlag = BTTLog.verboseEnabled ? " --verbose" : ""
-
-        BTTLog.verbose("writeInstrumentScript — path: \(scriptPath)")
-        BTTLog.verbose("  verboseFlag baked into script: '\(verboseFlag.isEmpty ? "(none)" : verboseFlag.trimmingCharacters(in: .whitespaces))'")
 
         let content = """
         #!/bin/bash
         export PATH="$PATH:/usr/local/bin"
         export PATH="$PATH:/opt/homebrew/bin"
         if [[ -x "$SRCROOT/\(BTTConstants.bttFolderName)/\(BTTConstants.binaryName)" ]]; then
-            "$SRCROOT/\(BTTConstants.bttFolderName)/\(BTTConstants.binaryName)" install "$SRCROOT"\(verboseFlag)
+            "$SRCROOT/\(BTTConstants.bttFolderName)/\(BTTConstants.binaryName)" instrument "$SRCROOT"\(verboseFlag)
         elif [[ -x "$(command -v \(BTTConstants.binaryName))" ]]; then
-            "$(command -v \(BTTConstants.binaryName))" install "$SRCROOT"\(verboseFlag)
+            "$(command -v \(BTTConstants.binaryName))" instrument "$SRCROOT"\(verboseFlag)
         else
             exit 0
         fi
         """
 
-        // Only rewrite if content changed — re-install with/without --verbose updates the baked flag
         let existing = try? String(contentsOfFile: scriptPath, encoding: .utf8)
         if existing == content {
-            BTTLog.verbose("  Script unchanged — skipping rewrite.")
-            return
+            return .unchanged
         }
 
         do {
             try content.write(toFile: scriptPath, atomically: true, encoding: .utf8)
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptPath)
-            let reason = existing == nil ? "created" : "updated (verbose flag \(BTTLog.verboseEnabled ? "added" : "removed"))"
-            BTTLog.verbose("  Script \(reason): \(scriptPath)")
+            return .written
         } catch {
-            BTTLog.verbose("  ✗ Script write failed: \(error.localizedDescription)")
+            return .failed(reason: "Failed to write \(BTTConstants.scriptFileName) at \(scriptPath): \(error.localizedDescription)")
         }
     }
 
     /// Copies the running BTTInstrumentor binary into the `.btt` folder.
-    func copyBinary() {
+    @discardableResult
+    func copyBinary() -> BTTWriteResult {
         let dest = (bttDir as NSString).appendingPathComponent(BTTConstants.binaryName)
         let src  = resolveSourceBinaryPath()
-        BTTLog.verbose("copyBinary — src: \(src) → dest: \(dest)")
+
+        guard fm.fileExists(atPath: src) else {
+            return .failed(reason: "Could not locate running BTTInstrumentor binary (tried: \(src))")
+        }
 
         do {
             if fm.fileExists(atPath: dest) {
-                BTTLog.verbose("  Existing binary found at dest — removing before copy.")
                 try fm.removeItem(atPath: dest)
             }
             try fm.copyItem(atPath: src, toPath: dest)
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest)
-            BTTLog.verbose("  ✓ Binary copied and made executable.")
+            return .written
         } catch {
-            BTTLog.verbose("  ✗ Binary copy failed: \(error.localizedDescription)")
-            BTTLog.error("Binary copy failed: \(error.localizedDescription)")
+            return .failed(reason: "Binary copy failed (\(src) → \(dest)): \(error.localizedDescription)")
         }
     }
 
     // MARK: - Private
+
     private func resolveSourceBinaryPath() -> String {
         let arg0 = CommandLine.arguments[0]
-        BTTLog.verbose("  resolveSourceBinaryPath — CommandLine.arguments[0]: \(arg0)")
-
         if arg0.hasPrefix("/"), fm.fileExists(atPath: arg0) {
-            BTTLog.verbose("  Using absolute path from argv[0]: \(arg0)")
             return arg0
         }
-
-        BTTLog.verbose("  argv[0] is not absolute or doesn't exist — falling back to 'which \(BTTConstants.binaryName)'")
         let task = Process()
         task.launchPath = "/usr/bin/which"
         task.arguments  = [BTTConstants.binaryName]
@@ -98,16 +109,12 @@ final class BTTScriptWriter {
         task.standardError  = Pipe()
         try? task.run()
         task.waitUntilExit()
-
         let found = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         if found.isEmpty {
-            BTTLog.verbose("  'which' returned empty — falling back to argv[0]: \(arg0)")
             return arg0
         }
-
-        BTTLog.verbose("  'which' resolved binary at: \(found)")
         return found
     }
 }

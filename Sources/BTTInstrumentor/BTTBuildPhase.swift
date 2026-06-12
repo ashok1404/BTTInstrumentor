@@ -169,7 +169,6 @@ final class BTTBuildPhase {
                 }
                 j += 1
             }
-            // Recheck same index after removal
         }
         return lines.joined(separator: "\n")
     }

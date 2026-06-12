@@ -19,6 +19,11 @@ final class BTTPackageDependency {
     }
 
     // MARK: - Add
+
+    /// Adds the `BTTSwiftUITracker` package product dependency to `targetName`.
+    /// - Returns: `true` if the dependency is present afterward (whether newly
+    ///   added or already linked), `false` only if it could not be added
+    ///   (e.g. BlueTriangle package not found on the target).
     @discardableResult
     func addSwiftUITracker(to targetName: String) -> Bool {
         guard let xcodeproj = try? XcodeProj(path: Path(xcodeprojPath)),
@@ -28,7 +33,6 @@ final class BTTPackageDependency {
         let existing = target.packageProductDependencies ?? []
 
         if existing.contains(where: { $0.productName == BTTConstants.bttSwiftUITrackerProduct }) {
-            BTTLog.verbose("\(BTTConstants.bttSwiftUITrackerProduct) already linked to '\(targetName)' — skipping.")
             return true
         }
 
@@ -42,30 +46,30 @@ final class BTTPackageDependency {
         xcodeproj.pbxproj.add(object: dep)
         target.packageProductDependencies = existing + [dep]
         try? xcodeproj.write(path: Path(xcodeprojPath))
-        BTTLog.verbose("Added \(BTTConstants.bttSwiftUITrackerProduct) dependency to '\(targetName)'.")
         return true
     }
 
     // MARK: - Remove
-    func removeSwiftUITracker(from targetName: String, store: BTTTargetStore) {
-        guard store.didAddBTTSwiftUITracker(for: targetName) else {
-            BTTLog.verbose("\(BTTConstants.bttSwiftUITrackerProduct) was not added by BTTInstrumentor for '\(targetName)' — skipping removal.")
-            return
-        }
+    /// Removes the `BTTSwiftUITracker` dependency from `targetName`, if BTTInstrumentor
+    /// originally added it (tracked in `store`).
+    /// - Returns: `true` if the dependency was removed, `false` if there was nothing to remove.
+    @discardableResult
+    func removeSwiftUITracker(from targetName: String, store: BTTTargetStore) -> Bool {
+        guard store.didAddBTTSwiftUITracker(for: targetName) else { return false }
 
         guard let xcodeproj = try? XcodeProj(path: Path(xcodeprojPath)),
               let target    = xcodeproj.pbxproj.nativeTargets.first(where: { $0.name == targetName })
-        else { return }
+        else { return false }
 
         let before = target.packageProductDependencies ?? []
         let after  = before.filter { $0.productName != BTTConstants.bttSwiftUITrackerProduct }
-        guard after.count != before.count else { return }
+        guard after.count != before.count else { return false }
 
         before.filter { $0.productName == BTTConstants.bttSwiftUITrackerProduct }
               .forEach { xcodeproj.pbxproj.delete(object: $0) }
         target.packageProductDependencies = after
         try? xcodeproj.write(path: Path(xcodeprojPath))
-        BTTLog.verbose("Removed \(BTTConstants.bttSwiftUITrackerProduct) from '\(targetName)'.")
+        return true
     }
 }
 

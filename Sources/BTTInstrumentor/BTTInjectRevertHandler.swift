@@ -1,5 +1,5 @@
 //
-//  BTTInjector.swift
+//  BTTInjectRevertHandler.swift
 //  BTTInstrumentor
 //
 //  Created by Ashok Singh on 04/06/26.
@@ -14,7 +14,7 @@ import SwiftParserDiagnostics
 
 /// Injects and reverts `@BTTTrack` instrumentation in Swift source files.
 final class BTTInjectRevertHandler {
-
+    // MARK: - Inject
     @discardableResult
     func inject(file path: String) -> Int {
         let fileName = URL(fileURLWithPath: path).lastPathComponent
@@ -23,10 +23,8 @@ final class BTTInjectRevertHandler {
             BTTLog.error("  ✗ Could not read file: \(path)")
             return 0
         }
-        
-        let tree = Parser.parse(source: source)
 
-        // Skip files that already have parse errors
+        let tree      = Parser.parse(source: source)
         let inputDiags = ParseDiagnosticsGenerator.diagnostics(for: tree)
         if !inputDiags.isEmpty {
             BTTLog.error("  ✗ Skipping — \(inputDiags.count) parse error(s) in source:")
@@ -39,30 +37,24 @@ final class BTTInjectRevertHandler {
             BTTLog.verbose("  ✗ Rewriter returned unexpected node type")
             return 0
         }
-
-        guard rewriter.injectedViews.count > 0 else {
-            return 0
-        }
+        guard rewriter.injectedViews.count > 0 else { return 0 }
 
         let result = newTree.description
-        guard result != source else {
-            return 0
-        }
+        guard result != source else { return 0 }
 
-        // Validate output before writing
         let outputTree  = Parser.parse(source: result)
         let outputDiags = ParseDiagnosticsGenerator.diagnostics(for: outputTree)
         if !outputDiags.isEmpty {
-            BTTLog.verbose("  ✗ \(fileName) Injection skipped — found \(outputDiags.count) parse error(s) in generated output:")
+            BTTLog.verbose("  ✗ \(fileName) Injection skipped — \(outputDiags.count) parse error(s) in generated output:")
             outputDiags.forEach { BTTLog.verbose("    \($0.message)") }
             return 0
         }
 
         do {
             try result.write(toFile: path, atomically: true, encoding: .utf8)
-            BTTLog.verbose("  ✓ \(rewriter.injectedViews) instrumented ")
+            BTTLog.verbose("  ✓ \(fileName) \(rewriter.injectedViews.joined(separator: ", ")) instrumented")
         } catch {
-            BTTLog.verbose("  ✗ \(fileName) failed to instrumented with error: \(error.localizedDescription)")
+            BTTLog.verbose("  ✗ \(fileName) failed to instrument: \(error.localizedDescription)")
             return 0
         }
 
@@ -70,6 +62,7 @@ final class BTTInjectRevertHandler {
     }
 
     // MARK: - Revert
+
     @discardableResult
     func revert(file path: String) -> Int {
         let fileName = URL(fileURLWithPath: path).lastPathComponent
@@ -80,9 +73,7 @@ final class BTTInjectRevertHandler {
 
         let hasBTTTrack  = source.contains("@\(BTTConstants.trackAttribute)")
         let hasBTTImport = source.contains("import \(BTTConstants.importModule)")
-        if !hasBTTTrack && !hasBTTImport {
-            return 0
-        }
+        if !hasBTTTrack && !hasBTTImport { return 0 }
 
         let tree     = Parser.parse(source: source)
         let rewriter = BTTRevertRewriter()
@@ -90,34 +81,42 @@ final class BTTInjectRevertHandler {
             BTTLog.verbose("  ✗ Rewriter returned unexpected node type")
             return 0
         }
-
-        guard rewriter.revertedViews.count > 0 else {
-            return 0
-        }
+        guard rewriter.revertedViews.count > 0 else { return 0 }
 
         let result = newTree.description
-        guard result != source else {
-            return 0
-        }
-        
+        guard result != source else { return 0 }
+
         let outputTree  = Parser.parse(source: result)
         let outputDiags = ParseDiagnosticsGenerator.diagnostics(for: outputTree)
         if !outputDiags.isEmpty {
-            BTTLog.verbose("  ✗ \(fileName) Revert skipped — found \(outputDiags.count) parse error(s) in generated output:")
+            BTTLog.verbose("  ✗ \(fileName) Revert skipped — \(outputDiags.count) parse error(s) in generated output:")
             outputDiags.forEach { BTTLog.verbose("    \($0.message)") }
             return 0
         }
 
         do {
             try result.write(toFile: path, atomically: true, encoding: .utf8)
-            BTTLog.verbose("  ✓ \(rewriter.revertedViews) revert instrumention.")
+            BTTLog.verbose("  ↩ \(fileName) \(rewriter.revertedViews.joined(separator: ", ")) reverted instrumentation")
         } catch {
-            BTTLog.verbose("  ✗ \(fileName) failed to revert instrumention with error: \(error.localizedDescription)")
+            BTTLog.verbose("  ✗ \(fileName) failed to revert: \(error.localizedDescription)")
             return 0
         }
 
         return rewriter.revertedViews.count
     }
+    
+    // MARK: - Dry-run count (no file writes)
+    /// Parses `path` and returns how many SwiftUI views *would* be injected,
+    /// without writing anything to disk.  Used by the post-install summary.
+    func countInjectableViews(file path: String) -> Int {
+        guard let source = try? String(contentsOfFile: path, encoding: .utf8) else { return 0 }
+        let tree = Parser.parse(source: source)
+        guard ParseDiagnosticsGenerator.diagnostics(for: tree).isEmpty else { return 0 }
+        let rewriter = BTTRewriter()
+        _ = rewriter.visit(tree)
+        return rewriter.injectedViews.count
+    }
+
 }
 
 #endif

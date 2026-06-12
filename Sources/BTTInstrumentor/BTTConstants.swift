@@ -9,10 +9,10 @@ import Foundation
 
 enum BTTConstants {
     static let version        = "1.0.0"
-    
+
     // MARK: - SDK
     static let minBTTVersion        = "3.15.13"
-    static let isForkedVersion      =  true
+    static let isForkedVersion      = true
 
     // MARK: - Package product names
     static let bttProductName            = "BlueTriangle"
@@ -31,50 +31,49 @@ enum BTTConstants {
 
     // MARK: - Scheme pre-action
     static let preActionTitle   = "BTTInstrumentation"
-    
+
     // MARK: - Project scanning
-    /// Max depth when searching for .xcodeproj files.
-    static let xcodeprojSearchDepth     = 4
-    /// Directory names excluded during Swift file scanning.
-    static let excludedScanPaths        = ["/Pods/", "/.build/", "/DerivedData/"]
+    static let xcodeprojSearchDepth  = 4
+    static let excludedScanPaths     = ["/Pods/", "/.build/", "/DerivedData/"]
 
     // MARK: - Package.resolved candidates
-    /// Relative paths tried inside .xcodeproj (most common first).
     static let packageResolvedCandidates = [
         "project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
         "project.xcworkspace/xcshareddata/Package.resolved"
     ]
-    /// Relative paths tried inside the sibling .xcworkspace (CocoaPods + SPM).
     static let workspaceResolvedCandidates = [
         "xcshareddata/swiftpm/Package.resolved",
         "xcshareddata/Package.resolved"
     ]
-    /// Relative path tried at the package root (Package.swift-only projects).
     static let rootPackageResolved = "Package.resolved"
 
-    // MARK: - Help text
+    // MARK: - Docs
+    static let docsURL = "https://help.bluetriangle.com/instrumentation"
+
+    // MARK: - Help text  (instrument command is intentionally omitted — internal use only)
     static let helpText = """
-        
+
         BTTInstrumentor — BlueTriangle SwiftUI Screen Tracking
-        
+
         USAGE
           BTTInstrumentor install    [project.xcodeproj] [--verbose]
-          BTTInstrumentor instrument [project.xcodeproj] [--verbose]
           BTTInstrumentor uninstall  [project.xcodeproj] [--verbose]
           BTTInstrumentor check      [project.xcodeproj] [--verbose]
-        
+
         COMMANDS
-          install     Adds scheme pre-action and saves target (no injection)
-          instrument  Injects @BTTTrack into SwiftUI views immediately
+          install     Adds scheme pre-action, saves target, and optionally
+                      injects @BTTTrack into SwiftUI views right away
           uninstall   Removes instrumentation for a target or full clean up
           check       Verifies all setup steps with ✓ / ✗ status
-        
+
         OPTIONS
           --verbose   Show detailed logs for any command
-        
+
         EXAMPLE
           cd MyApp && BTTInstrumentor install
-          cd MyApp && BTTInstrumentor instrument --verbose
           cd MyApp && BTTInstrumentor uninstall
+          cd MyApp && BTTInstrumentor check --verbose
+
+        For more information see \(docsURL)
         """
 }
