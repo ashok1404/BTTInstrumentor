@@ -9,7 +9,7 @@ import SwiftSyntax
 import SwiftParser
 
 final class BTTRevertRewriter: SyntaxRewriter {
-    var revertedViews = [String]()
+    var revertedViews =  Set<String>()
 
     override func visit(_ node: SourceFileSyntax) -> SourceFileSyntax {
         let visited  = super.visit(node)
@@ -55,7 +55,7 @@ final class BTTRevertRewriter: SyntaxRewriter {
             .with(\.attributes, filtered)
             .with(\.leadingTrivia, originalTrivia)
 
-        revertedViews.append(name)
+        revertedViews.insert(name)
         return DeclSyntax(modified)
     }
 }

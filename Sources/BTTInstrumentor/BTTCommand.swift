@@ -291,23 +291,26 @@ final class BTTCommand {
         }
 
         BTTLog.info("Found \(swiftUIFiles) SwiftUI file(s) and \(swiftUIViews) view(s)\n")
-        BTTLog.prompt("Instrument all? (y/n): ")
-
-        let answer = readLine()?.trimmingCharacters(in: .whitespaces).lowercased()
-
-        if answer == "y" || answer == "yes" {
-            let injector  = BTTInjectRevertHandler()
-            var injFiles  = 0
-            var injViews  = 0
-            let start     = Date()
-
-            for file in files {
-                let count = injector.inject(file: file)
-                if count > 0 { injViews += count; injFiles += 1 }
+        
+        if swiftUIFiles > 0 {
+            BTTLog.prompt("Instrument all? (y/n): ")
+            let answer = readLine()?.trimmingCharacters(in: .whitespaces).lowercased()
+            if answer == "y" || answer == "yes" {
+                let injector  = BTTInjectRevertHandler()
+                var injFiles  = 0
+                var injViews  = 0
+                let start     = Date()
+                
+                for file in files {
+                    let count = injector.inject(file: file)
+                    if count > 0 { injViews += count; injFiles += 1 }
+                }
+                
+                let ms = Int(Date().timeIntervalSince(start) * 1000)
+                BTTLog.success("Instrumentation completed — SwiftUI files \(injFiles), SwiftUI views \(injViews), time taken \(ms) ms")
+            } else {
+                printNextBuildMessage()
             }
-
-            let ms = Int(Date().timeIntervalSince(start) * 1000)
-            BTTLog.success("Instrumentation completed — SwiftUI files \(injFiles), SwiftUI views \(injViews), time taken \(ms) ms")
         } else {
             printNextBuildMessage()
         }

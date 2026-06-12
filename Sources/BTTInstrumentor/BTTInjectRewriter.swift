@@ -10,7 +10,7 @@ import SwiftParser
 import SwiftSyntaxBuilder
 
 final class BTTInjectRewriter: SyntaxRewriter {
-    var injectedViews = [String]()
+    var injectedViews = Set<String>()
 
     override func visit(_ node: SourceFileSyntax) -> SourceFileSyntax {
         let visited = super.visit(node)
@@ -83,7 +83,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
             modified = strippedNode.with(\.attributes, combined)
         }
 
-        injectedViews.append(name)
+        injectedViews.insert(name)
         return DeclSyntax(modified)
     }
 
