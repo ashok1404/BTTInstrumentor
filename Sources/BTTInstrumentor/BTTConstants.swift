@@ -12,7 +12,7 @@ enum BTTConstants {
 
     // MARK: - SDK
     static let minBTTVersion        = "3.15.13"
-    static let isForkedVersion      = true
+    static let isForkedVersion      = false
 
     // MARK: - Package product names
     static let bttProductName            = "BlueTriangle"

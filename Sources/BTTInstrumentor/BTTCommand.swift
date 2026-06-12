@@ -96,7 +96,9 @@ final class BTTCommand {
 
         let setupSucceeded = !matchingSchemes.isEmpty && trackerResult.isLinked
         if setupSucceeded {
-            store.add(selected, bttSwiftUITrackerAdded: trackerResult == .added)
+            let weAddedItBefore = store.didAddBTTSwiftUITracker(for: selected)
+            let weAddedItNow    = trackerResult == .added
+            store.add(selected, bttSwiftUITrackerAdded: weAddedItBefore || weAddedItNow)
         } else {
             store.remove(selected)
         }

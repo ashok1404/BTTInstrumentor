@@ -36,10 +36,17 @@ final class BTTInjectRevertHandler {
             BTTLog.verbose("  ✗ Rewriter returned unexpected node type")
             return 0
         }
-        guard rewriter.injectedViews.count > 0 else { return 0 }
-
         let result = newTree.description
-        guard result != source else { return 0 }
+        guard rewriter.injectedViews.count > 0 || result != source else { return 0 }
+        guard result != source else { return 0 } // no-op if injectedViews>0 but text unchanged (shouldn't happen, but stay safe)
+
+        let hasTrackAttr   = result.contains("@\(BTTConstants.trackAttribute)")
+        let hasTrackImport = result.contains("import \(BTTConstants.importModule)")
+        if hasTrackAttr && !hasTrackImport {
+            BTTLog.error("  ✗ \(fileName) Injection skipped — @\(BTTConstants.trackAttribute) was added but import \(BTTConstants.importModule) is missing.")
+            BTTLog.error("    This indicates an unexpected file layout. Please report this file to BlueTriangle.")
+            return 0
+        }
 
         let outputTree  = Parser.parse(source: result)
         let outputDiags = ParseDiagnosticsGenerator.diagnostics(for: outputTree)
@@ -51,7 +58,11 @@ final class BTTInjectRevertHandler {
 
         do {
             try result.write(toFile: path, atomically: true, encoding: .utf8)
-            BTTLog.verbose("  ✓ \(fileName) \(rewriter.injectedViews.joined(separator: ", ")) instrumented")
+            if rewriter.injectedViews.isEmpty {
+                BTTLog.verbose("  ✓ \(fileName) repaired — added missing import \(BTTConstants.importModule)")
+            } else {
+                BTTLog.verbose("  ✓ \(fileName) \(rewriter.injectedViews.joined(separator: ", ")) instrumented")
+            }
         } catch {
             BTTLog.verbose("  ✗ \(fileName) failed to instrument: \(error.localizedDescription)")
             return 0
@@ -103,7 +114,7 @@ final class BTTInjectRevertHandler {
         return rewriter.revertedViews.count
     }
     
-    // MARK: - Dry-run count (no of file writes)
+    // MARK: - Dry-run count (no file writes)
     func countInjectableViews(file path: String) -> Int {
         guard let source = try? String(contentsOfFile: path, encoding: .utf8) else { return 0 }
         let tree = Parser.parse(source: source)

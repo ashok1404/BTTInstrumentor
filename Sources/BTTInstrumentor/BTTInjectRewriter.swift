@@ -1,5 +1,5 @@
 //
-//  BTTInjectRewriter.swift
+//  BTTRewriter.swift
 //  BTTInstrumentor
 //
 //  Created by Ashok Singh on 04/06/26.
@@ -10,15 +10,15 @@ import SwiftParser
 import SwiftSyntaxBuilder
 
 final class BTTInjectRewriter: SyntaxRewriter {
-    var injectedViews = Set<String>()
+    var injectedViews = [String]()
 
     override func visit(_ node: SourceFileSyntax) -> SourceFileSyntax {
         let visited = super.visit(node)
-        guard injectedViews.count > 0 else {
+        let needsImport = injectedViews.count > 0 || fileContainsTrackAttribute(visited)
+        guard needsImport else {
             return visited
         }
 
-        // Skip if import already present
         let alreadyImported = visited.statements.contains(where: { stmt in
             guard let d = stmt.item.as(ImportDeclSyntax.self) else { return false }
             return d.path.trimmedDescription == BTTConstants.importModule
@@ -40,7 +40,8 @@ final class BTTInjectRewriter: SyntaxRewriter {
             guard let d = stmt.item.as(ImportDeclSyntax.self) else { return false }
             return d.path.trimmedDescription == "SwiftUI"
         }) else {
-            return visited
+            statements.insert(CodeBlockItemSyntax(item: .decl(DeclSyntax(bttImport.with(\.leadingTrivia, [])))), at: 0)
+            return visited.with(\.statements, CodeBlockItemListSyntax(statements))
         }
 
         statements.insert(
@@ -83,7 +84,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
             modified = strippedNode.with(\.attributes, combined)
         }
 
-        injectedViews.insert(name)
+        injectedViews.append(name)
         return DeclSyntax(modified)
     }
 
@@ -106,5 +107,9 @@ final class BTTInjectRewriter: SyntaxRewriter {
             guard case .attribute(let a) = attr else { return false }
             return a.attributeName.trimmedDescription == name
         }
+    }
+
+    private func fileContainsTrackAttribute(_ node: SourceFileSyntax) -> Bool {
+        node.description.contains("@\(BTTConstants.trackAttribute)")
     }
 }
