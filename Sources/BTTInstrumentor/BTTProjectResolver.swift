@@ -10,8 +10,6 @@ import Foundation
 import PathKit
 import XcodeProj
 
-/// Resolves Xcode project artifacts: the .xcodeproj path, target names,
-/// and the Swift source files belonging to each target.
 final class BTTProjectResolver {
     private let args: BTTArgs
     private let fm = FileManager.default
@@ -35,7 +33,7 @@ final class BTTProjectResolver {
         }
     }
 
-    // MARK: - Non-interactive resolution
+    // MARK: - Non-interactive
     private func resolveNonInteractive(from found: [String]) -> String {
         let rootPath = args.rootPath
         let directChildren = found.filter { ($0 as NSString).deletingLastPathComponent == rootPath }
@@ -53,7 +51,7 @@ final class BTTProjectResolver {
         return found[0]
     }
 
-    // MARK: - Interactive resolution
+    // MARK: - Interactive
     private func resolveInteractive(from found: [String]) -> String {
         BTTLog.prompt("\nMultiple .xcodeproj files found. Which one do you want to use?\n")
         found.enumerated().forEach { i, p in

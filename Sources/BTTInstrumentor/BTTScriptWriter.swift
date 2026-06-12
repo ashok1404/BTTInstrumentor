@@ -8,7 +8,6 @@
 #if os(macOS)
 import Foundation
 
-/// Outcome of a write/copy operation that may be skipped, performed, or fail.
 enum BTTWriteResult {
     case unchanged
     case written

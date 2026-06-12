@@ -4,9 +4,7 @@
 //
 //  Created by Ashok Singh on 12/06/26.
 //
-//  Top-level entry point. Parses no logic of its own — routes each
-//  CLI command to the cmd* method that implements it.
-//
+
 //  Public commands  (shown in help)
 //  ────────────────────────────────
 //  install     – Adds scheme pre-action, saves target, then optionally injects immediately.

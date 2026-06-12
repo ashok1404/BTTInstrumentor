@@ -8,9 +8,6 @@
 import SwiftSyntax
 import SwiftParser
 
-/// Removes all BTT injection artifacts from a Swift source file:
-/// - `import BTTSwiftUITracker`
-/// - `@BTTTrack` attributes on structs
 final class BTTRevertRewriter: SyntaxRewriter {
     var revertedViews = [String]()
 

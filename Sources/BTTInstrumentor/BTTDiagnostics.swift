@@ -4,10 +4,6 @@
 //
 //  Created by Ashok Singh on 12/06/26.
 //
-//  Implements the `check` command — a numbered ✓/✗ checklist that verifies
-//  every step of BTTInstrumentor's setup, with a diagnostic line under each
-//  failure explaining the actual cause.
-//
 
 #if os(macOS)
 import Foundation

@@ -35,8 +35,6 @@ enum BTTLog {
     }
 
     /// Prints a prompt with no prefix and no color, then leaves the cursor on
-    /// the same line (no trailing newline) so the user's input appears inline.
-    /// Use for interactive prompts: "Enter the number: ", "Instrument all? (y/n): "
     static func prompt(_ msg: String) {
         print(msg, terminator: "")
     }
