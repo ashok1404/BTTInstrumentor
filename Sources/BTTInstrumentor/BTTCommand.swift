@@ -4,8 +4,6 @@
 //
 //  Created by Ashok Singh on 12/06/26.
 //
-//  Implements the install / instrument / uninstall commands.
-//
 
 #if os(macOS)
 import Foundation
@@ -60,8 +58,8 @@ final class BTTCommand {
         }
 
         // ── Inject pre-action (also writes tracker dependency) ────────────────
-        let buildPhase   = BTTBuildPhase(xcodeprojPath: xcodeprojPath)
-        let trackerAdded = buildPhase.addPreAction(for: selected)
+        let buildPhase    = BTTBuildPhase(xcodeprojPath: xcodeprojPath)
+        let trackerResult = buildPhase.addPreAction(for: selected)
         BTTLog.verbose("Created \(BTTConstants.configFileName)")
 
         let scriptResult = writer.writeInstrumentScript()
@@ -91,22 +89,18 @@ final class BTTCommand {
             BTTLog.verbose("Injected pre-action script for target \(selected) and scheme(s) \(matchingSchemes.joined(separator: ", "))")
         }
 
-        if !trackerAdded {
+        if trackerResult == .failed {
             BTTLog.warn("\(BTTConstants.bttSwiftUITrackerProduct) dependency could not be added to '\(selected)'.")
             BTTLog.warn("  ↳ check that the \(BTTConstants.bttProductName) package is added to this target.")
         }
 
-        // Only mark as instrumented if the pre-action was actually injected and
-        // the tracker dependency was linked — otherwise the target isn't set up
-        // and shouldn't show as "(already instrumented)" on the next run.
-        let setupSucceeded = !matchingSchemes.isEmpty && trackerAdded
+        let setupSucceeded = !matchingSchemes.isEmpty && trackerResult.isLinked
         if setupSucceeded {
-            store.add(selected, bttSwiftUITrackerAdded: trackerAdded)
+            store.add(selected, bttSwiftUITrackerAdded: trackerResult == .added)
         } else {
             store.remove(selected)
         }
 
-        // ── Success banner ────────────────────────────────────────────────────
         if !setupSucceeded {
             BTTLog.warn("Install completed with warnings for project \(projName).xcodeproj target \(selected). Run 'BTTInstrumentor check' for details.")
             return
@@ -114,7 +108,6 @@ final class BTTCommand {
 
         BTTLog.success("Successfully installed BTTInstrumentor \(BTTConstants.version) to project \(projName).xcodeproj target \(selected)")
 
-        // ── Scan + optional immediate instrumentation ─────────────────────────
         promptImmediateInstrumentation(for: selected, in: xcodeprojPath, resolver: resolver)
     }
 
@@ -262,6 +255,24 @@ final class BTTCommand {
                 BTTLog.warn("No pre-action script found for target '\(target)' — scheme may already be clean.")
             }
 
+            // If this was the last instrumented target, the .btt folder is no
+            // longer needed — clean it up the same way "remove all" does.
+            var bttFolderRemoved = false
+            var bttDirStillExists = false
+            if store.targets.isEmpty {
+                BTTLog.verbose("'\(target)' was the last instrumented target — removing .btt folder")
+                let bttDirPath = (projectDir as NSString).appendingPathComponent(BTTConstants.bttFolderName)
+                removeBttFolder(projectDir: projectDir)
+                bttDirStillExists = FileManager.default.fileExists(atPath: bttDirPath)
+                if bttDirStillExists {
+                    BTTLog.error("Failed to remove .btt folder at \(bttDirPath).")
+                    BTTLog.error("  ↳ check folder permissions and remove it manually if needed.")
+                } else {
+                    BTTLog.verbose("Removed .btt folder")
+                    bttFolderRemoved = true
+                }
+            }
+
             let ms = Int(Date().timeIntervalSince(start) * 1000)
             if revertedFiles == 0 && revertedViews == 0 {
                 BTTLog.warn("Uninstall ran but no instrumented SwiftUI files were found for '\(target)' (time taken \(ms) ms).")
@@ -269,8 +280,11 @@ final class BTTCommand {
                 BTTLog.success("Uninstall completed — SwiftUI files \(revertedFiles), SwiftUI views \(revertedViews), time taken \(ms) ms")
             }
 
-            if preActionRemoved {
+            if preActionRemoved && !bttDirStillExists {
                 BTTLog.success("✓ '\(target)' removed.")
+                if bttFolderRemoved {
+                    BTTLog.success("✓ .btt folder removed (no instrumented targets remain).")
+                }
             } else {
                 BTTLog.warn("'\(target)' removed with warnings. Run 'BTTInstrumentor check' for details.")
             }
@@ -409,8 +423,10 @@ final class BTTCommand {
             let resolver   = BTTProjectResolver(args: args)
             let buildPhase = BTTBuildPhase(xcodeprojPath: xcodeprojPath)
             for target in resolver.getTargets(in: xcodeprojPath) {
-                let added = buildPhase.addPreAction(for: target)
-                store.add(target, bttSwiftUITrackerAdded: added)
+                let result = buildPhase.addPreAction(for: target)
+                if result.isLinked {
+                    store.add(target, bttSwiftUITrackerAdded: result == .added)
+                }
             }
         }
     }

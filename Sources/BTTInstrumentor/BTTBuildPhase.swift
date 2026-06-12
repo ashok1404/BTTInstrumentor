@@ -4,8 +4,6 @@
 //
 //  Created by Ashok Singh on 04/06/26.
 //
-//  Manages Xcode scheme pre-actions for BTT instrumentation.
-//
 
 #if os(macOS)
 import Foundation
@@ -19,15 +17,13 @@ final class BTTBuildPhase {
         self.xcodeprojPath = xcodeprojPath
     }
 
-    /// Injects the BTT pre-action into every scheme that references `targetName`.
-    /// Also adds the BTTSwiftUITracker dependency to the target.
-    /// - Returns: `true` if BTTSwiftUITracker was successfully added (or already present).
     @discardableResult
-    func addPreAction(for targetName: String) -> Bool {
+    func addPreAction(for targetName: String) -> BTTTrackerLinkResult {
         let dependency = BTTPackageDependency(xcodeprojPath: xcodeprojPath)
-        guard dependency.addSwiftUITracker(to: targetName) else {
+        let trackerResult = dependency.addSwiftUITracker(to: targetName)
+        guard trackerResult.isLinked else {
             BTTLog.warn("BTTSwiftUITracker not added for '\(targetName)' — skipping pre-action.")
-            return false
+            return trackerResult
         }
 
         let projName = ((xcodeprojPath as NSString).lastPathComponent as NSString).deletingPathExtension
@@ -44,13 +40,9 @@ final class BTTBuildPhase {
             content = insertAction(action, into: content)
             try? content.write(toFile: schemePath, atomically: true, encoding: .utf8)
         }
-        return true
+        return trackerResult
     }
 
-    /// Strips the BTT pre-action from schemes.
-    /// - Parameters:
-    ///   - target: The specific target to remove, or `nil` to strip from all schemes.
-    ///   - keepTargets: Targets whose schemes should NOT be modified (used for single-target removal).
     @discardableResult
     func removePreActions(for target: String? = nil, keepTargets: [String] = [], store: BTTTargetStore) -> Bool {
         var removed = false
