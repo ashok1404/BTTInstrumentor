@@ -25,7 +25,6 @@ struct BTTTargetStore {
     }
 
     // MARK: - Read
-
     internal var targets: [String] {
         return load()?.targets ?? []
     }

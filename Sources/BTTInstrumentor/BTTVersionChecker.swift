@@ -34,15 +34,8 @@ final class BTTVersionChecker {
         return candidates.lazy.compactMap { self.parseVersion(from: $0) }.first
     }
 
-    /// Checks the resolved version and returns `true` if instrumentation should proceed.
-    ///
-    /// - If `BTTConstants.isForkedVersion` is `true`:
-    ///     Interactive  → skips version check with a warning (dev/fork branch allowed).
-    ///     Non-interactive → blocks with an error (production builds require a release).
-    /// - Otherwise performs a normal version gate against `BTTConstants.minBTTVersion`.
     @discardableResult
     func checkAndProceed() -> Bool {
-        // Fork/dev branch gate
         if BTTConstants.isForkedVersion {
             if isatty(STDIN_FILENO) != 0 {
                 BTTLog.warn("BTTConstants.isForkedVersion = true — version check skipped. Set to false before release.")
@@ -65,8 +58,8 @@ final class BTTVersionChecker {
 
         BTTLog.error(
             "\(BTTConstants.bttProductName) \(version) does not support SwiftUI screen auto-tracking. " +
-            "Please update to >= \(BTTConstants.minBTTVersion) in Xcode " +
-            "(File → Packages → Update to Latest Package Versions), then re-run BTTInstrumentor."
+            "Please update \(BTTConstants.bttProductName) to >= \(BTTConstants.minBTTVersion) in Xcode " +
+            "(File → Packages → Update to Latest Package Versions), then quit xcode and re-run BTTInstrumentor."
         )
         return false
     }

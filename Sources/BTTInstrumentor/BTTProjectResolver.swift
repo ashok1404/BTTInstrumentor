@@ -55,7 +55,7 @@ final class BTTProjectResolver {
     private func resolveInteractive(from found: [String]) -> String {
         BTTLog.prompt("\nMultiple .xcodeproj files found. Which one do you want to use?\n")
         found.enumerated().forEach { i, p in
-            BTTLog.prompt("\(i + 1). \(URL(fileURLWithPath: p).lastPathComponent) (\(p))")
+            BTTLog.prompt("\n\(i + 1). \(URL(fileURLWithPath: p).lastPathComponent)")
         }
         BTTLog.prompt("\nEnter the number: ")
 

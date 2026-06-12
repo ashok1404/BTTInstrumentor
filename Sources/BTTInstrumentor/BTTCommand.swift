@@ -19,7 +19,7 @@ final class BTTCommand {
 
     // MARK: - install (public)
     func cmdInstall() {
-        BTTLog.verbose("Looking for .xcodeproj files in \(args.rootPath)")
+        BTTLog.verbose("Looking for .xcodeproj files")
         let xcodeprojPath = requireXcodeproj()
         let projName      = ((xcodeprojPath as NSString).lastPathComponent as NSString).deletingPathExtension
         BTTLog.verbose("Found \(projName).xcodeproj")
@@ -110,11 +110,14 @@ final class BTTCommand {
 
     // MARK: - instrument (internal — invoked by btt_instrument.sh on every Xcode build)
     func cmdInstrument() {
+        BTTLog.verbose("Looking for .xcodeproj files")
         guard let xcodeprojPath = BTTProjectResolver(args: args).resolveXcodeproj() else {
             BTTLog.warn("No .xcodeproj found")
             return
         }
-
+        let projName      = ((xcodeprojPath as NSString).lastPathComponent as NSString).deletingPathExtension
+        BTTLog.verbose("Found \(projName).xcodeproj")
+        
         let projectDir = (xcodeprojPath as NSString).deletingLastPathComponent
         let store      = BTTTargetStore(projectDir: projectDir)
 
@@ -122,7 +125,9 @@ final class BTTCommand {
 
         let resolver = BTTProjectResolver(args: args)
         let targets  = store.targets.isEmpty ? resolver.getTargets(in: xcodeprojPath) : store.targets
-
+        BTTLog.verbose("Found instrumented targets: \(targets.joined(separator: ", "))")
+        BTTLog.verbose("Scanning project ...")
+        
         var files = [String]()
         var seen  = Set<String>()
         for target in targets {
@@ -151,9 +156,8 @@ final class BTTCommand {
     }
 
     // MARK: - uninstall (public)
-
     func cmdUninstall() {
-        BTTLog.verbose("Looking for .xcodeproj files in \(args.rootPath)")
+        BTTLog.verbose("Looking for .xcodeproj files")
         let xcodeprojPath = requireXcodeproj()
         let projName      = ((xcodeprojPath as NSString).lastPathComponent as NSString).deletingPathExtension
         BTTLog.verbose("Found \(projName).xcodeproj")

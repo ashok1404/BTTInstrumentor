@@ -20,8 +20,7 @@ final class BTTDiagnostics {
     // MARK: - check (public)
 
     func cmdCheck() {
-        BTTLog.info("\nBlueTriangle BTTInstrumentor — Setup Check\n")
-
+        BTTLog.info("\nLooking for xcodeproj")
         let xcodeprojPath = requireXcodeproj()
         let projectDir    = (xcodeprojPath as NSString).deletingLastPathComponent
         let bttDir        = (projectDir as NSString).appendingPathComponent(BTTConstants.bttFolderName)
