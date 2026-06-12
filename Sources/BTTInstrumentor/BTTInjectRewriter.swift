@@ -1,5 +1,5 @@
 //
-//  BTTRewriter.swift
+//  BTTInjectRewriter.swift
 //  BTTInstrumentor
 //
 //  Created by Ashok Singh on 04/06/26.
@@ -9,10 +9,7 @@ import SwiftSyntax
 import SwiftParser
 import SwiftSyntaxBuilder
 
-/// Injects `@BTTTrack` above every SwiftUI `View`.
-/// Also inserts `import BTTSwiftUITracker` after `import SwiftUI` when at least one
-/// struct was instrumented.
-final class BTTRewriter: SyntaxRewriter {
+final class BTTInjectRewriter: SyntaxRewriter {
     var injectedViews = [String]()
 
     override func visit(_ node: SourceFileSyntax) -> SourceFileSyntax {

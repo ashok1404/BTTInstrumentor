@@ -109,10 +109,7 @@ final class BTTCommand {
     }
 
     // MARK: - instrument (internal — invoked by btt_instrument.sh on every Xcode build)
-
     func cmdInstrument() {
-        BTTLog.info("instrument version \(BTTConstants.version)")
-
         guard let xcodeprojPath = BTTProjectResolver(args: args).resolveXcodeproj() else {
             BTTLog.warn("No .xcodeproj found")
             return

@@ -12,7 +12,6 @@ import SwiftParser
 import SwiftDiagnostics
 import SwiftParserDiagnostics
 
-/// Injects and reverts `@BTTTrack` instrumentation in Swift source files.
 final class BTTInjectRevertHandler {
     // MARK: - Inject
     @discardableResult
@@ -32,7 +31,7 @@ final class BTTInjectRevertHandler {
             return 0
         }
 
-        let rewriter = BTTRewriter()
+        let rewriter = BTTInjectRewriter()
         guard let newTree = rewriter.visit(tree).as(SourceFileSyntax.self) else {
             BTTLog.verbose("  ✗ Rewriter returned unexpected node type")
             return 0
@@ -62,7 +61,6 @@ final class BTTInjectRevertHandler {
     }
 
     // MARK: - Revert
-
     @discardableResult
     func revert(file path: String) -> Int {
         let fileName = URL(fileURLWithPath: path).lastPathComponent
@@ -105,14 +103,12 @@ final class BTTInjectRevertHandler {
         return rewriter.revertedViews.count
     }
     
-    // MARK: - Dry-run count (no file writes)
-    /// Parses `path` and returns how many SwiftUI views *would* be injected,
-    /// without writing anything to disk.  Used by the post-install summary.
+    // MARK: - Dry-run count (no of file writes)
     func countInjectableViews(file path: String) -> Int {
         guard let source = try? String(contentsOfFile: path, encoding: .utf8) else { return 0 }
         let tree = Parser.parse(source: source)
         guard ParseDiagnosticsGenerator.diagnostics(for: tree).isEmpty else { return 0 }
-        let rewriter = BTTRewriter()
+        let rewriter = BTTInjectRewriter()
         _ = rewriter.visit(tree)
         return rewriter.injectedViews.count
     }
