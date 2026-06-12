@@ -20,7 +20,7 @@ final class BTTDiagnostics {
     // MARK: - check (public)
 
     func cmdCheck() {
-        BTTLog.info("\nLooking for xcodeproj")
+        BTTLog.info("Looking for .xcodeproj files")
         let xcodeprojPath = requireXcodeproj()
         let projectDir    = (xcodeprojPath as NSString).deletingLastPathComponent
         let bttDir        = (projectDir as NSString).appendingPathComponent(BTTConstants.bttFolderName)
