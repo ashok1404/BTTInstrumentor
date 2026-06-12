@@ -12,7 +12,7 @@ enum BTTConstants {
 
     // MARK: - SDK
     static let minBTTVersion        = "3.15.13"
-    static let isForkedVersion      = true
+    static let isForkedVersion      = false
 
     // MARK: - Package product names
     static let bttProductName            = "BlueTriangle"
@@ -56,7 +56,7 @@ enum BTTConstants {
         USAGE
           BTTInstrumentor install    [project.xcodeproj] [--verbose]
           BTTInstrumentor uninstall  [project.xcodeproj] [--verbose]
-          BTTInstrumentor check      [project.xcodeproj] [--verbose]
+          BTTInstrumentor check      [project.xcodeproj]
 
         COMMANDS
           install     Adds scheme pre-action, saves target, and optionally
@@ -69,8 +69,10 @@ enum BTTConstants {
 
         EXAMPLE
           cd MyApp && BTTInstrumentor install
+          cd MyApp && BTTInstrumentor install --verbose
           cd MyApp && BTTInstrumentor uninstall
-          cd MyApp && BTTInstrumentor check --verbose
+          cd MyApp && BTTInstrumentor uninstall --verbose
+          cd MyApp && BTTInstrumentor check 
 
         For more information see \(docsURL)
         """
