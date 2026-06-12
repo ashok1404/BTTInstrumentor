@@ -37,11 +37,15 @@ final class BTTDiagnostics {
         )
 
         if let saved = store.savedXcodeprojPath() {
+            let savedURL   = URL(fileURLWithPath: saved).standardized
+            let currentURL = URL(fileURLWithPath: xcodeprojPath).standardized
+            let pathsMatch = savedURL.path == currentURL.path
+
             checkItem(next(),
-                exists: saved == xcodeprojPath,
+                exists: pathsMatch,
                 pass: "Saved project path matches: \(URL(fileURLWithPath: saved).lastPathComponent)",
                 fail: "Saved project path mismatch — run 'BTTInstrumentor install'",
-                diagnose: "saved: \(saved)\n       current: \(xcodeprojPath)"
+                diagnose: "saved: \(savedURL.path)\n       current: \(currentURL.path)"
             )
         } else {
             checkItem(next(),
@@ -72,8 +76,9 @@ final class BTTDiagnostics {
             )
         }
 
+        let bttDirExists = fm.fileExists(atPath: bttDir)
         checkItem(next(),
-            exists: fm.fileExists(atPath: bttDir),
+            exists: bttDirExists,
             pass: ".btt folder exists",
             fail: ".btt folder missing — run 'BTTInstrumentor install'",
             diagnose: "expected at \(bttDir)"
@@ -137,14 +142,16 @@ final class BTTDiagnostics {
             checkItem(next(),
                 exists: hasPreAction,
                 pass: "Pre-action in scheme: \(target)",
-                fail: "Pre-action missing for '\(target)' Quit xcode(mandatory for proper instrumentation) — run 'BTTInstrumentor install'",
+                fail: "Pre-action missing for '\(target)' (quit Xcode, mandatory for proper instrumentation) — run 'BTTInstrumentor install'",
                 diagnose: schemePaths.isEmpty
                     ? "no .xcscheme files found in xcshareddata/xcschemes or xcuserdata"
                     : "checked scheme(s): \(schemePaths.map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent }.joined(separator: ", ")) — none reference target '\(target)' with pre-action '\(BTTConstants.preActionTitle)'"
             )
         }
 
-        BTTLog.info("")
+        if !bttDirExists {
+            BTTLog.warn(".btt folder is missing, so the items above show as missing too — run 'BTTInstrumentor install' to recreate everything.")
+        }
     }
 
     // MARK: - Private helpers

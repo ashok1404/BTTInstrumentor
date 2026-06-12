@@ -19,9 +19,6 @@ struct BTTTargetStore {
     init(projectDir: String) {
         let bttDir      = (projectDir as NSString).appendingPathComponent(BTTConstants.bttFolderName)
         self.configPath = (bttDir as NSString).appendingPathComponent(BTTConstants.configFileName)
-        if !FileManager.default.fileExists(atPath: bttDir) {
-            try? FileManager.default.createDirectory(atPath: bttDir, withIntermediateDirectories: true)
-        }
     }
 
     // MARK: - Read
@@ -89,6 +86,10 @@ struct BTTTargetStore {
 
     private func save(_ data: StoreData) {
         guard let raw = try? JSONEncoder().encode(data) else { return }
+        let bttDir = (configPath as NSString).deletingLastPathComponent
+        if !FileManager.default.fileExists(atPath: bttDir) {
+            try? FileManager.default.createDirectory(atPath: bttDir, withIntermediateDirectories: true)
+        }
         do {
             // Temporarily make writable, write, then lock read-only
             try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: configPath)

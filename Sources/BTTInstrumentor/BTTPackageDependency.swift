@@ -46,10 +46,12 @@ final class BTTPackageDependency {
         xcodeproj.pbxproj.add(object: dep)
         target.packageProductDependencies = existing + [dep]
         try? xcodeproj.write(path: Path(xcodeprojPath))
+        BTTLog.verbose("Injected \(BTTConstants.bttSwiftUITrackerProduct) dependency into '\(targetName)'")
         return true
     }
 
     // MARK: - Remove
+
     /// Removes the `BTTSwiftUITracker` dependency from `targetName`, if BTTInstrumentor
     /// originally added it (tracked in `store`).
     /// - Returns: `true` if the dependency was removed, `false` if there was nothing to remove.
@@ -69,6 +71,7 @@ final class BTTPackageDependency {
               .forEach { xcodeproj.pbxproj.delete(object: $0) }
         target.packageProductDependencies = after
         try? xcodeproj.write(path: Path(xcodeprojPath))
+        BTTLog.verbose("Removed \(BTTConstants.bttSwiftUITrackerProduct) dependency from '\(targetName)'")
         return true
     }
 }

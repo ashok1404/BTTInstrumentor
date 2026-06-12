@@ -67,6 +67,13 @@ final class BTTBuildPhase {
 
                 BTTPackageDependency(xcodeprojPath: xcodeprojPath)
                     .removeSwiftUITracker(from: target, store: store)
+            } else {
+                // "Remove all" — strip BTTSwiftUITracker from every instrumented
+                // target whose pre-action appears in this scheme.
+                for instrumentedTarget in store.targets where content.contains("BlueprintName = \"\(instrumentedTarget)\"") {
+                    BTTPackageDependency(xcodeprojPath: xcodeprojPath)
+                        .removeSwiftUITracker(from: instrumentedTarget, store: store)
+                }
             }
 
             let cleaned = stripActionBlock(from: content)

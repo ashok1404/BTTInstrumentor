@@ -62,7 +62,6 @@ final class BTTCommand {
         // ── Inject pre-action (also writes tracker dependency) ────────────────
         let buildPhase   = BTTBuildPhase(xcodeprojPath: xcodeprojPath)
         let trackerAdded = buildPhase.addPreAction(for: selected)
-        store.add(selected, bttSwiftUITrackerAdded: trackerAdded)
         BTTLog.verbose("Created \(BTTConstants.configFileName)")
 
         let scriptResult = writer.writeInstrumentScript()
@@ -97,12 +96,23 @@ final class BTTCommand {
             BTTLog.warn("  ↳ check that the \(BTTConstants.bttProductName) package is added to this target.")
         }
 
-        // ── Success banner ────────────────────────────────────────────────────
-        if matchingSchemes.isEmpty || !trackerAdded {
-            BTTLog.warn("Install completed with warnings for project \(projName).xcodeproj target \(selected). Run 'BTTInstrumentor check' for details.")
+        // Only mark as instrumented if the pre-action was actually injected and
+        // the tracker dependency was linked — otherwise the target isn't set up
+        // and shouldn't show as "(already instrumented)" on the next run.
+        let setupSucceeded = !matchingSchemes.isEmpty && trackerAdded
+        if setupSucceeded {
+            store.add(selected, bttSwiftUITrackerAdded: trackerAdded)
         } else {
-            BTTLog.success("Successfully installed BTTInstrumentor \(BTTConstants.version) to project \(projName).xcodeproj target \(selected)")
+            store.remove(selected)
         }
+
+        // ── Success banner ────────────────────────────────────────────────────
+        if !setupSucceeded {
+            BTTLog.warn("Install completed with warnings for project \(projName).xcodeproj target \(selected). Run 'BTTInstrumentor check' for details.")
+            return
+        }
+
+        BTTLog.success("Successfully installed BTTInstrumentor \(BTTConstants.version) to project \(projName).xcodeproj target \(selected)")
 
         // ── Scan + optional immediate instrumentation ─────────────────────────
         promptImmediateInstrumentation(for: selected, in: xcodeprojPath, resolver: resolver)
@@ -203,7 +213,6 @@ final class BTTCommand {
                 totalViews += v
             }
 
-            BTTLog.verbose("Removing pre-action scripts from all schemes")
             let preActionsRemoved = buildPhase.removePreActions(store: store)
             if preActionsRemoved {
                 BTTLog.verbose("Removed pre-action scripts")
@@ -211,7 +220,6 @@ final class BTTCommand {
                 BTTLog.warn("No pre-action scripts found to remove — schemes may already be clean.")
             }
 
-            BTTLog.verbose("Removing .btt folder")
             let bttDirPath = (projectDir as NSString).appendingPathComponent(BTTConstants.bttFolderName)
             let bttDirExistedBeforeRemoval = FileManager.default.fileExists(atPath: bttDirPath)
             removeBttFolder(projectDir: projectDir)
@@ -246,7 +254,6 @@ final class BTTCommand {
                 for: target, in: xcodeprojPath, resolver: resolver, injector: injector
             )
 
-            BTTLog.verbose("Removing pre-action script for target \(target)")
             let preActionRemoved = buildPhase.removePreActions(for: target, keepTargets: keepTargets, store: store)
             store.remove(target)
             if preActionRemoved {
