@@ -48,12 +48,6 @@ final class BTTBuildPhase {
                 continue
             }
 
-            // Only treat this scheme as "for targetName" if targetName is the
-            // scheme's PRIMARY build target (the first BuildableReference inside
-            // <BuildActionEntries>). This excludes local SPM package schemes
-            // (e.g. LocalLogin, LocalAuthKit) whose own BuildActionEntries reference
-            // the package itself, even if the app target's name appears
-            // elsewhere in the file (e.g. as a Run/launch executable override).
             guard let primaryBlueprint = primaryBuildActionBlueprint(in: content) else {
                 BTTLog.verbose("  \(schemeName): no <BuildActionEntries> found — skipping")
                 continue
@@ -98,8 +92,6 @@ final class BTTBuildPhase {
                 BTTPackageDependency(xcodeprojPath: xcodeprojPath)
                     .removeSwiftUITracker(from: target, store: store)
             } else {
-                // "Remove all" — strip BTTSwiftUITracker from every instrumented
-                // target whose pre-action appears in this scheme.
                 for instrumentedTarget in store.targets where content.contains("BlueprintName = \"\(instrumentedTarget)\"") {
                     BTTPackageDependency(xcodeprojPath: xcodeprojPath)
                         .removeSwiftUITracker(from: instrumentedTarget, store: store)
@@ -117,18 +109,14 @@ final class BTTBuildPhase {
     }
 
     // MARK: - Scheme path discovery
+
     func collectSchemePaths() -> [String] {
         var paths: [String] = []
 
-        // 1. Shared schemes inside the .xcodeproj
         let sharedDir = (xcodeprojPath as NSString).appendingPathComponent("xcshareddata/xcschemes")
         paths += schemeFiles(in: sharedDir)
-
-        // 2. Per-user schemes inside the .xcodeproj
         paths += userSchemeFiles(under: (xcodeprojPath as NSString).appendingPathComponent("xcuserdata"))
 
-        // 3. Sibling .xcworkspace (CocoaPods / SPM workspaces commonly store
-        //    user schemes here instead of inside the .xcodeproj)
         let projDir  = (xcodeprojPath as NSString).deletingLastPathComponent
         let projName = ((xcodeprojPath as NSString).lastPathComponent as NSString).deletingPathExtension
         let wsPath   = (projDir as NSString).appendingPathComponent("\(projName).xcworkspace")
@@ -158,13 +146,10 @@ final class BTTBuildPhase {
     }
 
     // MARK: - Private XML helpers
+
     private func buildActionXML(blueprintID: String, targetName: String, projName: String) -> String {
-        let script =
-            "export PATH=&quot;$PATH:/usr/local/bin&quot;&#10;" +
-            "export PATH=&quot;$PATH:/opt/homebrew/bin&quot;&#10;" +
-            "if [[ ! -f &quot;$SRCROOT/\(BTTConstants.bttFolderName)/\(BTTConstants.scriptFileName)&quot; ]]; then exit 0; fi&#10;" +
-            "bash &quot;$SRCROOT/\(BTTConstants.bttFolderName)/\(BTTConstants.scriptFileName)&quot;&#10;" +
-            "exit $?&#10;"
+        // All logic is handled inside btt_instrument.sh — scheme pre-action just calls it.
+        let script = "bash &quot;$SRCROOT/\(BTTConstants.bttFolderName)/\(BTTConstants.scriptFileName)&quot; || true&#10;"
 
         return
             "         <ExecutionAction\n" +
@@ -198,10 +183,10 @@ final class BTTBuildPhase {
         return c
     }
 
-    // Matches both current title (BTTConstants.preActionTitle) and legacy "BTT Instrumentation"
-    private func isBTTActionTitle(_ line: String) -> Bool {
-        line.contains("title = \"\(BTTConstants.preActionTitle)\"") ||
-        line.contains("title = \"BTT Instrumentation\"")
+    // Matches both current title and legacy "BTT Instrumentation" (with space)
+    private func isBTTActionTitle(_ block: String) -> Bool {
+        block.contains("title = \"\(BTTConstants.preActionTitle)\"") ||
+        block.contains("title = \"BTT Instrumentation\"")
     }
 
     private func stripActionBlock(from content: String) -> String {
@@ -209,17 +194,12 @@ final class BTTBuildPhase {
         var i = 0
         while i < lines.count {
             guard lines[i].contains("<ExecutionAction") else { i += 1; continue }
-
             let lookahead = min(i + 25, lines.count - 1)
             let block = lines[i...lookahead].joined(separator: "\n")
             guard isBTTActionTitle(block) else { i += 1; continue }
-
             var j = i + 1
             while j < lines.count {
-                if lines[j].contains("</ExecutionAction>") {
-                    lines.removeSubrange(i...j)
-                    break
-                }
+                if lines[j].contains("</ExecutionAction>") { lines.removeSubrange(i...j); break }
                 j += 1
             }
         }
@@ -248,11 +228,7 @@ final class BTTBuildPhase {
     }
 
     /// Returns the `BlueprintName` of the first `BuildableReference` inside
-    /// `<BuildActionEntries>` — i.e. the scheme's primary build target.
-    /// A scheme "belongs to" this target. Local SPM package schemes
-    /// (e.g. for `LocalLoginKit`, `LocalAuthKit`) have their own package as the
-    /// primary target here, even if the app target appears elsewhere in the
-    /// file (e.g. as the Run action's executable).
+    /// `<BuildActionEntries>` — the scheme's primary build target.
     private func primaryBuildActionBlueprint(in content: String) -> String? {
         let lines = content.components(separatedBy: "\n")
         guard let startIdx = lines.firstIndex(where: { $0.contains("<BuildActionEntries>") }) else {

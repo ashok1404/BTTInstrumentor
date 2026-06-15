@@ -12,13 +12,14 @@ enum BTTWriteResult {
     case unchanged
     case written
     case failed(reason: String)
+
     var succeeded: Bool {
         switch self {
         case .unchanged, .written: return true
-        case .failed:return false
+        case .failed: return false
         }
     }
-    
+
     var wasWritten: Bool {
         if case .written = self { return true }
         return false
@@ -37,8 +38,9 @@ final class BTTScriptWriter {
     // MARK: - Public
 
     /// Writes `btt_instrument.sh` into the `.btt` folder with executable permissions.
-    /// The script calls `instrument` (the internal command) so Xcode pre-action builds
-    /// never trigger the interactive `install` flow.
+    /// Called by the Xcode scheme pre-action on every build.
+    /// Uses $PROJECT_FILE_PATH and $TARGET_NAME — Xcode build variables — so the
+    /// correct project and currently-building target are always passed to the binary.
     @discardableResult
     func writeInstrumentScript() -> BTTWriteResult {
         let scriptPath  = (bttDir as NSString).appendingPathComponent(BTTConstants.scriptFileName)
@@ -59,12 +61,14 @@ final class BTTScriptWriter {
 
         let existing = try? String(contentsOfFile: scriptPath, encoding: .utf8)
         if existing == content {
+            BTTLog.verbose("Script unchanged — skipping rewrite.")
             return .unchanged
         }
 
         do {
             try content.write(toFile: scriptPath, atomically: true, encoding: .utf8)
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptPath)
+            BTTLog.verbose("Script \(existing == nil ? "created" : "updated"): \(scriptPath)")
             return .written
         } catch {
             return .failed(reason: "Failed to write \(BTTConstants.scriptFileName) at \(scriptPath): \(error.localizedDescription)")
@@ -82,11 +86,10 @@ final class BTTScriptWriter {
         }
 
         do {
-            if fm.fileExists(atPath: dest) {
-                try fm.removeItem(atPath: dest)
-            }
+            if fm.fileExists(atPath: dest) { try fm.removeItem(atPath: dest) }
             try fm.copyItem(atPath: src, toPath: dest)
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest)
+            BTTLog.verbose("Binary copied: \(src) → \(dest)")
             return .written
         } catch {
             return .failed(reason: "Binary copy failed (\(src) → \(dest)): \(error.localizedDescription)")
@@ -97,24 +100,20 @@ final class BTTScriptWriter {
 
     private func resolveSourceBinaryPath() -> String {
         let arg0 = CommandLine.arguments[0]
-        if arg0.hasPrefix("/"), fm.fileExists(atPath: arg0) {
-            return arg0
-        }
+        if arg0.hasPrefix("/"), fm.fileExists(atPath: arg0) { return arg0 }
+
         let task = Process()
-        task.launchPath = "/usr/bin/which"
-        task.arguments  = [BTTConstants.binaryName]
-        let pipe        = Pipe()
+        task.launchPath     = "/usr/bin/which"
+        task.arguments      = [BTTConstants.binaryName]
+        let pipe            = Pipe()
         task.standardOutput = pipe
         task.standardError  = Pipe()
         try? task.run()
         task.waitUntilExit()
+
         let found = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        if found.isEmpty {
-            return arg0
-        }
-        return found
+        return found.isEmpty ? arg0 : found
     }
 }
 
