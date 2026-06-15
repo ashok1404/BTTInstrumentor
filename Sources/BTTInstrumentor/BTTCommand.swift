@@ -58,8 +58,10 @@ final class BTTCommand {
         }
 
         // ── Inject pre-action (also writes tracker dependency) ────────────────
-        let buildPhase    = BTTBuildPhase(xcodeprojPath: xcodeprojPath)
-        let trackerResult = buildPhase.addPreAction(for: selected)
+        let buildPhase     = BTTBuildPhase(xcodeprojPath: xcodeprojPath)
+        let preActionResult = buildPhase.addPreAction(for: selected)
+        let trackerResult   = preActionResult.trackerResult
+        let matchingSchemes = preActionResult.matchedSchemes
         BTTLog.verbose("Created \(BTTConstants.configFileName)")
 
         let scriptResult = writer.writeInstrumentScript()
@@ -74,19 +76,11 @@ final class BTTCommand {
             exit(1)
         }
 
-        let matchingSchemes = buildPhase.collectSchemePaths()
-            .filter { path in
-                guard let content = try? String(contentsOfFile: path, encoding: .utf8) else { return false }
-                return content.contains(BTTConstants.preActionTitle) &&
-                       content.contains("BlueprintName = \"\(selected)\"")
-            }
-            .map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent }
-
         if matchingSchemes.isEmpty {
             BTTLog.warn("No scheme found referencing target '\(selected)' — pre-action was not injected.")
             BTTLog.warn("  ↳ instrumentation will not run automatically on build. Add the target to a scheme and re-run 'BTTInstrumentor install'.")
         } else {
-            BTTLog.verbose("Injected pre-action script for target \(selected) and scheme(s) \(matchingSchemes.joined(separator: ", "))")
+            BTTLog.verbose("Pre-action present for target \(selected) in scheme(s) \(matchingSchemes.joined(separator: ", "))")
         }
 
         if trackerResult == .failed {
@@ -243,7 +237,6 @@ final class BTTCommand {
             let target      = instrumented[idx - 1]
             let keepTargets = instrumented.filter { $0 != target }
 
-            BTTLog.verbose("Reverting target: \(target)")
             let start = Date()
             let (revertedFiles, revertedViews) = revertSwiftFiles(
                 for: target, in: xcodeprojPath, resolver: resolver, injector: injector
@@ -344,7 +337,6 @@ final class BTTCommand {
     }
 
     // MARK: - Private helpers
-
     private func requireXcodeproj() -> String {
         guard let path = BTTProjectResolver(args: args).resolveXcodeproj() else {
             BTTLog.error("No .xcodeproj found in \(args.rootPath)")
@@ -403,7 +395,6 @@ final class BTTCommand {
         let fm         = FileManager.default
         let bttDir     = (projectDir as NSString).appendingPathComponent(BTTConstants.bttFolderName)
         let binaryPath = (bttDir as NSString).appendingPathComponent(BTTConstants.binaryName)
-        let scriptPath = (bttDir as NSString).appendingPathComponent(BTTConstants.scriptFileName)
         let configPath = (bttDir as NSString).appendingPathComponent(BTTConstants.configFileName)
         let writer     = BTTScriptWriter(projectDir: projectDir)
 
@@ -415,10 +406,14 @@ final class BTTCommand {
                 BTTLog.warn("Could not restore BTTInstrumentor binary — \(reason)")
             }
         }
-        if !fm.fileExists(atPath: scriptPath) {
-            if case .failed(let reason) = writer.writeInstrumentScript() {
-                BTTLog.warn("Could not restore \(BTTConstants.scriptFileName) — \(reason)")
-            }
+
+        switch writer.writeInstrumentScript() {
+        case .written:
+            BTTLog.verbose("Updated \(BTTConstants.scriptFileName) (was stale)")
+        case .unchanged:
+            break
+        case .failed(let reason):
+            BTTLog.warn("Could not update \(BTTConstants.scriptFileName) — \(reason)")
         }
         if !fm.fileExists(atPath: configPath) {
             BTTLog.warn("\(BTTConstants.configFileName) missing — re-run 'BTTInstrumentor install' to reconfigure.")
@@ -426,8 +421,8 @@ final class BTTCommand {
             let buildPhase = BTTBuildPhase(xcodeprojPath: xcodeprojPath)
             for target in resolver.getTargets(in: xcodeprojPath) {
                 let result = buildPhase.addPreAction(for: target)
-                if result.isLinked {
-                    store.add(target, bttSwiftUITrackerAdded: result == .added)
+                if result.trackerResult.isLinked {
+                    store.add(target, bttSwiftUITrackerAdded: result.trackerResult == .added)
                 }
             }
         }

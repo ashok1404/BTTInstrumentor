@@ -33,7 +33,6 @@ final class BTTProjectResolver {
         }
     }
 
-    // MARK: - Non-interactive
     private func resolveNonInteractive(from found: [String]) -> String {
         let rootPath = args.rootPath
         let directChildren = found.filter { ($0 as NSString).deletingLastPathComponent == rootPath }
@@ -51,11 +50,10 @@ final class BTTProjectResolver {
         return found[0]
     }
 
-    // MARK: - Interactive
     private func resolveInteractive(from found: [String]) -> String {
         BTTLog.prompt("\nMultiple .xcodeproj files found. Which one do you want to use?\n")
         found.enumerated().forEach { i, p in
-            BTTLog.prompt("\n\(i + 1). \(URL(fileURLWithPath: p).lastPathComponent)")
+            BTTLog.prompt("\(i + 1). \(URL(fileURLWithPath: p).lastPathComponent) (\(p))")
         }
         BTTLog.prompt("\nEnter the number: ")
 
@@ -68,7 +66,6 @@ final class BTTProjectResolver {
     }
 
     // MARK: - Targets
-    /// Returns all target names from `xcodebuild -list`.
     func getTargets(in xcodeprojPath: String) -> [String] {
         var targets   = [String]()
         var seen      = Set<String>()
@@ -82,7 +79,23 @@ final class BTTProjectResolver {
             if trimmed.hasSuffix(":") { break }
             if seen.insert(trimmed).inserted { targets.append(trimmed) }
         }
+
+        if targets.isEmpty {
+            BTTLog.verbose("xcodebuild -list returned no targets — falling back to reading targets directly from .pbxproj")
+            targets = getTargetsFromPbxproj(xcodeprojPath: xcodeprojPath)
+        }
+
         return targets
+    }
+
+    /// Reads native target names directly from the .pbxproj, bypassing
+    /// `xcodebuild -list` (and therefore SPM package resolution) entirely.
+    private func getTargetsFromPbxproj(xcodeprojPath: String) -> [String] {
+        guard let xcodeproj = try? XcodeProj(path: Path(xcodeprojPath)) else {
+            BTTLog.verbose("  could not open .pbxproj for fallback target listing")
+            return []
+        }
+        return xcodeproj.pbxproj.nativeTargets.map { $0.name }
     }
 
     // MARK: - Swift files
@@ -203,12 +216,12 @@ final class BTTProjectResolver {
         let task = Process()
         task.launchPath     = "/usr/bin/xcrun"
         task.arguments      = ["xcodebuild", "-list", "-project", projPath]
-        let pipe            = Pipe()
-        task.standardOutput = pipe
+        let outPipe         = Pipe()
+        task.standardOutput = outPipe
         task.standardError  = Pipe()
         try? task.run()
         task.waitUntilExit()
-        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        return String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
     }
 }
 

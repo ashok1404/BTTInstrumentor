@@ -4,6 +4,8 @@
 //
 //  Created by Ashok Singh on 04/06/26.
 //
+//  Manages Xcode scheme pre-actions for BTT instrumentation.
+//
 
 #if os(macOS)
 import Foundation
@@ -17,30 +19,66 @@ final class BTTBuildPhase {
         self.xcodeprojPath = xcodeprojPath
     }
 
+    /// Result of `addPreAction`.
+    struct PreActionResult {
+        let trackerResult: BTTTrackerLinkResult
+        let matchedSchemes: [String]
+    }
+
     @discardableResult
-    func addPreAction(for targetName: String) -> BTTTrackerLinkResult {
+    func addPreAction(for targetName: String) -> PreActionResult {
         let dependency = BTTPackageDependency(xcodeprojPath: xcodeprojPath)
         let trackerResult = dependency.addSwiftUITracker(to: targetName)
         guard trackerResult.isLinked else {
             BTTLog.warn("BTTSwiftUITracker not added for '\(targetName)' — skipping pre-action.")
-            return trackerResult
+            return PreActionResult(trackerResult: trackerResult, matchedSchemes: [])
         }
 
         let projName = ((xcodeprojPath as NSString).lastPathComponent as NSString).deletingPathExtension
 
-        for schemePath in collectSchemePaths() {
-            guard var content = try? String(contentsOfFile: schemePath, encoding: .utf8),
-                  content.contains("BlueprintName = \"\(targetName)\""),
-                  !content.contains(BTTConstants.preActionTitle),
-                  !content.contains("BTT Instrumentation")   // legacy title guard
-            else { continue }
+        let schemePaths = collectSchemePaths()
+        BTTLog.verbose("Found \(schemePaths.count) scheme file(s): \(schemePaths.map { URL(fileURLWithPath: $0).lastPathComponent }.joined(separator: ", "))")
+
+        var matchedSchemes: [String] = []
+
+        for schemePath in schemePaths {
+            let schemeName = URL(fileURLWithPath: schemePath).deletingPathExtension().lastPathComponent
+            guard var content = try? String(contentsOfFile: schemePath, encoding: .utf8) else {
+                BTTLog.verbose("  \(schemeName): could not read file")
+                continue
+            }
+
+            // Only treat this scheme as "for targetName" if targetName is the
+            // scheme's PRIMARY build target (the first BuildableReference inside
+            // <BuildActionEntries>). This excludes local SPM package schemes
+            // (e.g. LocalLogin, LocalAuthKit) whose own BuildActionEntries reference
+            // the package itself, even if the app target's name appears
+            // elsewhere in the file (e.g. as a Run/launch executable override).
+            guard let primaryBlueprint = primaryBuildActionBlueprint(in: content) else {
+                BTTLog.verbose("  \(schemeName): no <BuildActionEntries> found — skipping")
+                continue
+            }
+            guard primaryBlueprint == targetName else {
+                BTTLog.verbose("  \(schemeName): primary build target is '\(primaryBlueprint)', not '\(targetName)' — skipping")
+                continue
+            }
+
+            let hasPreAction = content.contains(BTTConstants.preActionTitle) || content.contains("BTT Instrumentation")
+
+            guard !hasPreAction else {
+                BTTLog.verbose("  \(schemeName): already has BTT pre-action — skipping")
+                matchedSchemes.append(schemeName)
+                continue
+            }
 
             let blueprintID = extractBlueprintID(from: content, targetName: targetName) ?? ""
             let action      = buildActionXML(blueprintID: blueprintID, targetName: targetName, projName: projName)
             content = insertAction(action, into: content)
             try? content.write(toFile: schemePath, atomically: true, encoding: .utf8)
+            BTTLog.verbose("  \(schemeName): pre-action injected for target '\(targetName)'")
+            matchedSchemes.append(schemeName)
         }
-        return trackerResult
+        return PreActionResult(trackerResult: trackerResult, matchedSchemes: matchedSchemes)
     }
 
     @discardableResult
@@ -80,25 +118,41 @@ final class BTTBuildPhase {
 
     // MARK: - Scheme path discovery
     func collectSchemePaths() -> [String] {
-        let sharedDir = (xcodeprojPath as NSString).appendingPathComponent("xcshareddata/xcschemes")
-        let userDir   = (xcodeprojPath as NSString).appendingPathComponent("xcuserdata")
         var paths: [String] = []
 
-        if let files = try? FileManager.default.contentsOfDirectory(atPath: sharedDir) {
-            paths += files
-                .filter { $0.hasSuffix(".xcscheme") }
-                .map { (sharedDir as NSString).appendingPathComponent($0) }
-        }
-        if let users = try? FileManager.default.contentsOfDirectory(atPath: userDir) {
-            for user in users where user.hasSuffix(".xcuserdatad") {
-                let dir = ((userDir as NSString).appendingPathComponent(user) as NSString)
-                    .appendingPathComponent("xcschemes")
-                if let files = try? FileManager.default.contentsOfDirectory(atPath: dir) {
-                    paths += files
-                        .filter { $0.hasSuffix(".xcscheme") }
-                        .map { (dir as NSString).appendingPathComponent($0) }
-                }
-            }
+        // 1. Shared schemes inside the .xcodeproj
+        let sharedDir = (xcodeprojPath as NSString).appendingPathComponent("xcshareddata/xcschemes")
+        paths += schemeFiles(in: sharedDir)
+
+        // 2. Per-user schemes inside the .xcodeproj
+        paths += userSchemeFiles(under: (xcodeprojPath as NSString).appendingPathComponent("xcuserdata"))
+
+        // 3. Sibling .xcworkspace (CocoaPods / SPM workspaces commonly store
+        //    user schemes here instead of inside the .xcodeproj)
+        let projDir  = (xcodeprojPath as NSString).deletingLastPathComponent
+        let projName = ((xcodeprojPath as NSString).lastPathComponent as NSString).deletingPathExtension
+        let wsPath   = (projDir as NSString).appendingPathComponent("\(projName).xcworkspace")
+
+        paths += schemeFiles(in: (wsPath as NSString).appendingPathComponent("xcshareddata/xcschemes"))
+        paths += userSchemeFiles(under: (wsPath as NSString).appendingPathComponent("xcuserdata"))
+
+        return paths
+    }
+
+    private func schemeFiles(in dir: String) -> [String] {
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return [] }
+        return files
+            .filter { $0.hasSuffix(".xcscheme") }
+            .map { (dir as NSString).appendingPathComponent($0) }
+    }
+
+    private func userSchemeFiles(under userDir: String) -> [String] {
+        guard let users = try? FileManager.default.contentsOfDirectory(atPath: userDir) else { return [] }
+        var paths: [String] = []
+        for user in users where user.hasSuffix(".xcuserdatad") {
+            let dir = ((userDir as NSString).appendingPathComponent(user) as NSString)
+                .appendingPathComponent("xcschemes")
+            paths += schemeFiles(in: dir)
         }
         return paths
     }
@@ -188,6 +242,27 @@ final class BTTBuildPhase {
             for j in stride(from: i, through: max(0, i - 5), by: -1) {
                 let parts = lines[j].components(separatedBy: "\"")
                 if lines[j].contains("BlueprintIdentifier"), parts.count >= 2 { return parts[1] }
+            }
+        }
+        return nil
+    }
+
+    /// Returns the `BlueprintName` of the first `BuildableReference` inside
+    /// `<BuildActionEntries>` — i.e. the scheme's primary build target.
+    /// A scheme "belongs to" this target. Local SPM package schemes
+    /// (e.g. for `LocalLoginKit`, `LocalAuthKit`) have their own package as the
+    /// primary target here, even if the app target appears elsewhere in the
+    /// file (e.g. as the Run action's executable).
+    private func primaryBuildActionBlueprint(in content: String) -> String? {
+        let lines = content.components(separatedBy: "\n")
+        guard let startIdx = lines.firstIndex(where: { $0.contains("<BuildActionEntries>") }) else {
+            return nil
+        }
+        for line in lines[startIdx...] {
+            if line.contains("</BuildActionEntries>") { break }
+            if line.contains("BlueprintName"),
+               let value = line.components(separatedBy: "\"").dropFirst().first {
+                return value
             }
         }
         return nil
