@@ -73,14 +73,13 @@ final class BTTScriptWriter {
     }
 
     /// Prompts the user to update the .btt/ binary if a newer version exists in PATH.
-    /// Call this early in install (before target selection) so the prompt appears up front.
-    func promptUpdateIfAvailable() {
+    /// Returns true if the binary was updated — caller can skip target selection and just refresh files.
+    @discardableResult
+    func promptUpdateIfAvailable() -> Bool {
         let dest = (bttDir as NSString).appendingPathComponent(BTTConstants.binaryName)
 
-        // Nothing to compare against on first install
-        guard fm.fileExists(atPath: dest) else { return }
-
-        guard let pathBinary = resolvePathBinary() else { return }
+        guard fm.fileExists(atPath: dest) else { return false }
+        guard let pathBinary = resolvePathBinary() else { return false }
 
         let destVersion = BTTVersionChecker.binaryVersion(at: dest)
         let pathVersion = BTTVersionChecker.binaryVersion(at: pathBinary)
@@ -89,19 +88,20 @@ final class BTTScriptWriter {
         BTTLog.verbose("  PATH version: \(pathVersion ?? "unknown") (\(pathBinary))")
 
         guard let dv = destVersion, let pv = pathVersion,
-              BTTVersionChecker.isVersion(pv, newerThan: dv) else { return }
+              BTTVersionChecker.isVersion(pv, newerThan: dv) else { return false }
 
         BTTLog.prompt("\nNew version \(pv) is available (you are on \(dv)).\n")
-        BTTLog.prompt("Do you want to update? (y/n): ")
+        BTTLog.prompt("Do you want to update \(pv)? (y/n): ")
 
         let answer = readLine()?.trimmingCharacters(in: .whitespaces).lowercased()
         guard answer == "y" || answer == "yes" else {
             BTTLog.info("Skipping update — continuing with \(dv).")
-            return
+            return false
         }
 
         _ = performCopy(src: pathBinary, dest: dest)
         BTTLog.success("✓ Updated .btt/\(BTTConstants.binaryName) to \(pv).")
+        return true
     }
 
     /// Copies the running BTTInstrumentor binary into the `.btt` folder.

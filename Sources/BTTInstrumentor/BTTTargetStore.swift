@@ -9,9 +9,10 @@ import Foundation
 
 struct BTTTargetStore {
     private struct StoreData: Codable {
-        var targets: [String]
+        var version:                String
+        var xcodeprojName:          String?
+        var targets:                [String]
         var bttSwiftUITrackerAdded: [String: Bool]
-        var xcodeprojPath: String?
     }
 
     private let configPath: String
@@ -22,32 +23,39 @@ struct BTTTargetStore {
     }
 
     // MARK: - Read
-    internal var targets: [String] {
-        return load()?.targets ?? []
+
+    var targets: [String] {
+        load()?.targets ?? []
     }
 
     func isInstrumented(_ target: String) -> Bool {
-        return targets.contains(target)
+        targets.contains(target)
     }
 
     func didAddBTTSwiftUITracker(for target: String) -> Bool {
-        return load()?.bttSwiftUITrackerAdded[target] ?? false
+        load()?.bttSwiftUITrackerAdded[target] ?? false
     }
 
-    /// Returns the xcodeproj path saved during `install` / `instrument`.
-    /// Used by `BTTProjectResolver` in non-interactive mode to pick the right project.
-    func savedXcodeprojPath() -> String? {
-        return load()?.xcodeprojPath
+    func savedVersion() -> String? {
+        load()?.version
     }
 
-    // MARK: - Write
+    func savedXcodeprojName() -> String? { load()?.xcodeprojName }
+
+    /// Saves just the .xcodeproj filename — never the full path.
+    func saveXcodeprojName(_ xcodeprojPath: String) {
+        let name = URL(fileURLWithPath: xcodeprojPath).lastPathComponent
+        var data = load() ?? StoreData(version: BTTConstants.version, xcodeprojName: nil, targets: [], bttSwiftUITrackerAdded: [:])
+        guard data.xcodeprojName != name else { return }
+        data.xcodeprojName = name
+        save(data)
+    }
 
     func add(_ target: String, bttSwiftUITrackerAdded: Bool = false) {
-        var data = load() ?? StoreData(targets: [], bttSwiftUITrackerAdded: [:], xcodeprojPath: nil)
-        if !data.targets.contains(target) {
-            data.targets.append(target)
-        }
+        var data = load() ?? StoreData(version: BTTConstants.version, xcodeprojName: nil, targets: [], bttSwiftUITrackerAdded: [:])
+        if !data.targets.contains(target) { data.targets.append(target) }
         data.bttSwiftUITrackerAdded[target] = bttSwiftUITrackerAdded
+        data.version = BTTConstants.version
         save(data)
     }
 
@@ -58,18 +66,8 @@ struct BTTTargetStore {
         save(data)
     }
 
-    /// Persists the resolved .xcodeproj path so non-interactive runs can
-    /// reproduce the same project selection without prompting.
-    func saveXcodeprojPath(_ path: String) {
-        var data = load() ?? StoreData(targets: [], bttSwiftUITrackerAdded: [:], xcodeprojPath: nil)
-        guard data.xcodeprojPath != path else {
-            return
-        }
-        data.xcodeprojPath = path
-        save(data)
-    }
-
     // MARK: - Private
+
     private func load() -> StoreData? {
         guard FileManager.default.fileExists(atPath: configPath) else { return nil }
         guard let raw = try? Data(contentsOf: URL(fileURLWithPath: configPath)) else {
@@ -85,18 +83,18 @@ struct BTTTargetStore {
     }
 
     private func save(_ data: StoreData) {
-        guard let raw = try? JSONEncoder().encode(data) else { return }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let raw = try? encoder.encode(data) else { return }
         let bttDir = (configPath as NSString).deletingLastPathComponent
         if !FileManager.default.fileExists(atPath: bttDir) {
             try? FileManager.default.createDirectory(atPath: bttDir, withIntermediateDirectories: true)
         }
         do {
-            // Temporarily make writable, write, then lock read-only
-            try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: configPath)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: configPath)
             try raw.write(to: URL(fileURLWithPath: configPath))
-            try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: configPath)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: configPath)
         } catch {
-            // Still attempt write even if chmod failed (first-time file creation)
             try? raw.write(to: URL(fileURLWithPath: configPath))
             try? FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: configPath)
         }

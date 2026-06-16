@@ -25,14 +25,26 @@ final class BTTCommand {
         let projectDir = (xcodeprojPath as NSString).deletingLastPathComponent
         let writer     = BTTScriptWriter(projectDir: projectDir)
 
-        // ── Check for newer version first (after brew upgrade) ────────────────
-        writer.promptUpdateIfAvailable()
+        let wasUpdated = writer.promptUpdateIfAvailable()
+        if wasUpdated {
+            let store = BTTTargetStore(projectDir: projectDir)
+            if !store.targets.isEmpty {
+                switch writer.writeInstrumentScript() {
+                case .written:   BTTLog.verbose("✓ \(BTTConstants.scriptFileName) updated.")
+                case .unchanged: BTTLog.verbose("✓ \(BTTConstants.scriptFileName) already up to date.")
+                case .failed(let reason): BTTLog.warn("Script update failed — \(reason)")
+                }
+                store.saveXcodeprojName(xcodeprojPath)
+                BTTLog.verbose("✓ \(BTTConstants.configFileName) updated to version \(BTTConstants.version).")
+                BTTLog.success("✓ BTTInstrumentor updated successfully.")
+            }
+        }
 
         requireBTTVersion(xcodeprojPath: xcodeprojPath)
 
         // ── Resolve targets ───────────────────────────────────────────────────
         let store      = BTTTargetStore(projectDir: projectDir)
-        store.saveXcodeprojPath(xcodeprojPath)
+        store.saveXcodeprojName(xcodeprojPath)
 
         let resolver   = BTTProjectResolver(args: args)
         let allTargets = resolver.getTargets(in: xcodeprojPath)
@@ -106,7 +118,10 @@ final class BTTCommand {
             return
         }
 
-        BTTLog.success("Successfully installed BTTInstrumentor \(BTTConstants.version) to project \(projName).xcodeproj target \(selected)")
+        let bttBinary       = (projectDir as NSString)
+            .appendingPathComponent("\(BTTConstants.bttFolderName)/\(BTTConstants.binaryName)")
+        let installedVersion = BTTVersionChecker.binaryVersion(at: bttBinary) ?? BTTConstants.version
+        BTTLog.success("Successfully installed BTTInstrumentor \(installedVersion) to project \(projName).xcodeproj target \(selected)")
 
         promptImmediateInstrumentation(for: selected, in: xcodeprojPath, resolver: resolver)
     }

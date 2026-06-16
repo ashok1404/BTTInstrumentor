@@ -18,7 +18,6 @@ final class BTTDiagnostics {
     }
 
     // MARK: - check (public)
-
     func cmdCheck() {
         BTTLog.info("Looking for .xcodeproj files")
         let xcodeprojPath = requireXcodeproj()
@@ -36,16 +35,15 @@ final class BTTDiagnostics {
             fail: ""
         )
 
-        if let saved = store.savedXcodeprojPath() {
-            let savedURL   = URL(fileURLWithPath: saved).standardized
-            let currentURL = URL(fileURLWithPath: xcodeprojPath).standardized
-            let pathsMatch = savedURL.path == currentURL.path
+        if let savedName = store.savedXcodeprojName() {
+            let currentName = URL(fileURLWithPath: xcodeprojPath).lastPathComponent
+            let namesMatch  = savedName == currentName
 
             checkItem(next(),
-                exists: pathsMatch,
-                pass: "Saved project path matches: \(URL(fileURLWithPath: saved).lastPathComponent)",
-                fail: "Saved project path mismatch — run 'BTTInstrumentor install'",
-                diagnose: "saved: \(savedURL.path)\n       current: \(currentURL.path)"
+                exists: namesMatch,
+                pass: "Saved project matches: \(savedName)",
+                fail: "Saved project mismatch — run 'BTTInstrumentor install'",
+                diagnose: "saved: \(savedName)\n       current: \(currentName)"
             )
         } else {
             checkItem(next(),
