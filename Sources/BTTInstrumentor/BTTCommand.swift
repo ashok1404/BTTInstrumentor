@@ -22,10 +22,15 @@ final class BTTCommand {
         let projName      = ((xcodeprojPath as NSString).lastPathComponent as NSString).deletingPathExtension
         BTTLog.verbose("Found \(projName).xcodeproj")
 
+        let projectDir = (xcodeprojPath as NSString).deletingLastPathComponent
+        let writer     = BTTScriptWriter(projectDir: projectDir)
+
+        // ── Check for newer version first (after brew upgrade) ────────────────
+        writer.promptUpdateIfAvailable()
+
         requireBTTVersion(xcodeprojPath: xcodeprojPath)
 
         // ── Resolve targets ───────────────────────────────────────────────────
-        let projectDir = (xcodeprojPath as NSString).deletingLastPathComponent
         let store      = BTTTargetStore(projectDir: projectDir)
         store.saveXcodeprojPath(xcodeprojPath)
 
@@ -38,7 +43,6 @@ final class BTTCommand {
         // ── Set up .btt folder ────────────────────────────────────────────────
         let bttDir        = (projectDir as NSString).appendingPathComponent(BTTConstants.bttFolderName)
         let bttDirExisted = FileManager.default.fileExists(atPath: bttDir)
-        let writer        = BTTScriptWriter(projectDir: projectDir)
 
         if !bttDirExisted {
             try? FileManager.default.createDirectory(atPath: bttDir, withIntermediateDirectories: true)

@@ -76,6 +76,26 @@ final class BTTVersionChecker {
         return true
     }
 
+    static func isVersion(_ a: String, newerThan b: String) -> Bool {
+        isVersion(a, atLeast: b) && a != b
+    }
+
+    /// Runs `path --version` and returns the last whitespace-separated token.
+    static func binaryVersion(at path: String) -> String? {
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        let task = Process()
+        task.launchPath     = path
+        task.arguments      = ["--version"]
+        let pipe            = Pipe()
+        task.standardOutput = pipe
+        task.standardError  = Pipe()
+        try? task.run()
+        task.waitUntilExit()
+        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: " ").last
+    }
+
     // MARK: - Private
     private func parseVersion(from path: String) -> String? {
         guard FileManager.default.fileExists(atPath: path),

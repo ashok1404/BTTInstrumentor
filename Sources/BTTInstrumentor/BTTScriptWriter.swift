@@ -38,9 +38,6 @@ final class BTTScriptWriter {
     // MARK: - Public
 
     /// Writes `btt_instrument.sh` into the `.btt` folder with executable permissions.
-    /// Called by the Xcode scheme pre-action on every build.
-    /// Uses $PROJECT_FILE_PATH and $TARGET_NAME — Xcode build variables — so the
-    /// correct project and currently-building target are always passed to the binary.
     @discardableResult
     func writeInstrumentScript() -> BTTWriteResult {
         let scriptPath  = (bttDir as NSString).appendingPathComponent(BTTConstants.scriptFileName)
@@ -75,7 +72,41 @@ final class BTTScriptWriter {
         }
     }
 
+    /// Prompts the user to update the .btt/ binary if a newer version exists in PATH.
+    /// Call this early in install (before target selection) so the prompt appears up front.
+    func promptUpdateIfAvailable() {
+        let dest = (bttDir as NSString).appendingPathComponent(BTTConstants.binaryName)
+
+        // Nothing to compare against on first install
+        guard fm.fileExists(atPath: dest) else { return }
+
+        guard let pathBinary = resolvePathBinary() else { return }
+
+        let destVersion = BTTVersionChecker.binaryVersion(at: dest)
+        let pathVersion = BTTVersionChecker.binaryVersion(at: pathBinary)
+
+        BTTLog.verbose("  .btt version: \(destVersion ?? "unknown")")
+        BTTLog.verbose("  PATH version: \(pathVersion ?? "unknown") (\(pathBinary))")
+
+        guard let dv = destVersion, let pv = pathVersion,
+              BTTVersionChecker.isVersion(pv, newerThan: dv) else { return }
+
+        BTTLog.prompt("\nNew version \(pv) is available (you are on \(dv)).\n")
+        BTTLog.prompt("Do you want to update? (y/n): ")
+
+        let answer = readLine()?.trimmingCharacters(in: .whitespaces).lowercased()
+        guard answer == "y" || answer == "yes" else {
+            BTTLog.info("Skipping update — continuing with \(dv).")
+            return
+        }
+
+        _ = performCopy(src: pathBinary, dest: dest)
+        BTTLog.success("✓ Updated .btt/\(BTTConstants.binaryName) to \(pv).")
+    }
+
     /// Copies the running BTTInstrumentor binary into the `.btt` folder.
+    /// - Copies only on first install (no existing binary).
+    /// - Otherwise leaves the existing binary untouched (updates are handled by promptUpdateIfAvailable).
     @discardableResult
     func copyBinary() -> BTTWriteResult {
         let dest = (bttDir as NSString).appendingPathComponent(BTTConstants.binaryName)
@@ -85,6 +116,34 @@ final class BTTScriptWriter {
             return .failed(reason: "Could not locate running BTTInstrumentor binary (tried: \(src))")
         }
 
+        // Only copy on first install — existing binary is left as-is
+        if fm.fileExists(atPath: dest) {
+            BTTLog.verbose("Binary already present — skipping copy.")
+            return .unchanged
+        }
+
+        return performCopy(src: src, dest: dest)
+    }
+
+    /// Finds BTTInstrumentor in system PATH excluding the .btt/ copy.
+    private func resolvePathBinary() -> String? {
+        let task = Process()
+        task.launchPath     = "/usr/bin/which"
+        task.arguments      = [BTTConstants.binaryName]
+        let pipe            = Pipe()
+        task.standardOutput = pipe
+        task.standardError  = Pipe()
+        try? task.run()
+        task.waitUntilExit()
+
+        let found = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        guard !found.isEmpty, !found.hasPrefix(bttDir) else { return nil }
+        return found
+    }
+
+    private func performCopy(src: String, dest: String) -> BTTWriteResult {
         do {
             if fm.fileExists(atPath: dest) { try fm.removeItem(atPath: dest) }
             try fm.copyItem(atPath: src, toPath: dest)
