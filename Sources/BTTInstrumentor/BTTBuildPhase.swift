@@ -19,23 +19,9 @@ final class BTTBuildPhase {
         self.xcodeprojPath = xcodeprojPath
     }
 
-    /// Result of `addPreAction`.
-    struct PreActionResult {
-        let trackerResult: BTTTrackerLinkResult
-        let matchedSchemes: [String]
-    }
-
     @discardableResult
-    func addPreAction(for targetName: String) -> PreActionResult {
-        let dependency = BTTPackageDependency(xcodeprojPath: xcodeprojPath)
-        let trackerResult = dependency.addSwiftUITracker(to: targetName)
-        guard trackerResult.isLinked else {
-            BTTLog.warn("BTTSwiftUITracker not added for '\(targetName)' — skipping pre-action.")
-            return PreActionResult(trackerResult: trackerResult, matchedSchemes: [])
-        }
-
+    func addPreAction(for targetName: String) -> [String] {
         let projName = ((xcodeprojPath as NSString).lastPathComponent as NSString).deletingPathExtension
-
         let schemePaths = collectSchemePaths()
         BTTLog.verbose("Found \(schemePaths.count) scheme file(s): \(schemePaths.map { URL(fileURLWithPath: $0).lastPathComponent }.joined(separator: ", "))")
 
@@ -58,7 +44,6 @@ final class BTTBuildPhase {
             }
 
             let hasPreAction = content.contains(BTTConstants.preActionTitle) || content.contains("BTT Instrumentation")
-
             guard !hasPreAction else {
                 BTTLog.verbose("  \(schemeName): already has BTT pre-action — skipping")
                 matchedSchemes.append(schemeName)
@@ -72,8 +57,10 @@ final class BTTBuildPhase {
             BTTLog.verbose("  \(schemeName): pre-action injected for target '\(targetName)'")
             matchedSchemes.append(schemeName)
         }
-        return PreActionResult(trackerResult: trackerResult, matchedSchemes: matchedSchemes)
+        return matchedSchemes
     }
+
+    // MARK: - Remove pre-action
 
     @discardableResult
     func removePreActions(for target: String? = nil, keepTargets: [String] = [], store: BTTTargetStore) -> Bool {
@@ -88,14 +75,6 @@ final class BTTBuildPhase {
                 guard content.contains("BlueprintName = \"\(target)\""),
                       !keepTargets.contains(where: { content.contains("BlueprintName = \"\($0)\"") })
                 else { continue }
-
-                BTTPackageDependency(xcodeprojPath: xcodeprojPath)
-                    .removeSwiftUITracker(from: target, store: store)
-            } else {
-                for instrumentedTarget in store.targets where content.contains("BlueprintName = \"\(instrumentedTarget)\"") {
-                    BTTPackageDependency(xcodeprojPath: xcodeprojPath)
-                        .removeSwiftUITracker(from: instrumentedTarget, store: store)
-                }
             }
 
             let cleaned = stripActionBlock(from: content)
@@ -129,28 +108,23 @@ final class BTTBuildPhase {
 
     private func schemeFiles(in dir: String) -> [String] {
         guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return [] }
-        return files
-            .filter { $0.hasSuffix(".xcscheme") }
-            .map { (dir as NSString).appendingPathComponent($0) }
+        return files.filter { $0.hasSuffix(".xcscheme") }.map { (dir as NSString).appendingPathComponent($0) }
     }
 
     private func userSchemeFiles(under userDir: String) -> [String] {
         guard let users = try? FileManager.default.contentsOfDirectory(atPath: userDir) else { return [] }
         var paths: [String] = []
         for user in users where user.hasSuffix(".xcuserdatad") {
-            let dir = ((userDir as NSString).appendingPathComponent(user) as NSString)
-                .appendingPathComponent("xcschemes")
+            let dir = ((userDir as NSString).appendingPathComponent(user) as NSString).appendingPathComponent("xcschemes")
             paths += schemeFiles(in: dir)
         }
         return paths
     }
 
-    // MARK: - Private XML helpers
+    // MARK: - XML helpers
 
     private func buildActionXML(blueprintID: String, targetName: String, projName: String) -> String {
-        // All logic is handled inside btt_instrument.sh — scheme pre-action just calls it.
         let script = "bash &quot;$SRCROOT/\(BTTConstants.bttFolderName)/\(BTTConstants.scriptFileName)&quot; || true&#10;"
-
         return
             "         <ExecutionAction\n" +
             "            ActionType = \"Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction\">\n" +
@@ -183,7 +157,6 @@ final class BTTBuildPhase {
         return c
     }
 
-    // Matches both current title and legacy "BTT Instrumentation" (with space)
     private func isBTTActionTitle(_ block: String) -> Bool {
         block.contains("title = \"\(BTTConstants.preActionTitle)\"") ||
         block.contains("title = \"BTT Instrumentation\"")
@@ -208,11 +181,7 @@ final class BTTBuildPhase {
 
     private func removeEmptyPreActionsTag(from content: String) -> String {
         guard let regex = try? NSRegularExpression(pattern: "\\s*<PreActions>\\s*</PreActions>") else { return content }
-        return regex.stringByReplacingMatches(
-            in: content,
-            range: NSRange(content.startIndex..., in: content),
-            withTemplate: ""
-        )
+        return regex.stringByReplacingMatches(in: content, range: NSRange(content.startIndex..., in: content), withTemplate: "")
     }
 
     private func extractBlueprintID(from content: String, targetName: String) -> String? {
@@ -227,19 +196,13 @@ final class BTTBuildPhase {
         return nil
     }
 
-    /// Returns the `BlueprintName` of the first `BuildableReference` inside
-    /// `<BuildActionEntries>` — the scheme's primary build target.
     private func primaryBuildActionBlueprint(in content: String) -> String? {
         let lines = content.components(separatedBy: "\n")
-        guard let startIdx = lines.firstIndex(where: { $0.contains("<BuildActionEntries>") }) else {
-            return nil
-        }
+        guard let startIdx = lines.firstIndex(where: { $0.contains("<BuildActionEntries>") }) else { return nil }
         for line in lines[startIdx...] {
             if line.contains("</BuildActionEntries>") { break }
             if line.contains("BlueprintName"),
-               let value = line.components(separatedBy: "\"").dropFirst().first {
-                return value
-            }
+               let value = line.components(separatedBy: "\"").dropFirst().first { return value }
         }
         return nil
     }

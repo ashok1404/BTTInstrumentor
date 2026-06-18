@@ -7,6 +7,8 @@
 
 #if os(macOS)
 import Foundation
+import PathKit
+import XcodeProj
 
 final class BTTCommand {
     private let args: BTTArgs
@@ -22,29 +24,33 @@ final class BTTCommand {
         let projName      = ((xcodeprojPath as NSString).lastPathComponent as NSString).deletingPathExtension
         BTTLog.verbose("Found \(projName).xcodeproj")
 
-        let projectDir = (xcodeprojPath as NSString).deletingLastPathComponent
-        let writer     = BTTScriptWriter(projectDir: projectDir)
-
-        let wasUpdated = writer.promptUpdateIfAvailable()
-        if wasUpdated {
-            let store = BTTTargetStore(projectDir: projectDir)
-            if !store.targets.isEmpty {
-                switch writer.writeInstrumentScript() {
-                case .written:   BTTLog.verbose("✓ \(BTTConstants.scriptFileName) updated.")
-                case .unchanged: BTTLog.verbose("✓ \(BTTConstants.scriptFileName) already up to date.")
-                case .failed(let reason): BTTLog.warn("Script update failed — \(reason)")
-                }
-                store.saveXcodeprojName(xcodeprojPath)
-                BTTLog.verbose("✓ \(BTTConstants.configFileName) updated to version \(BTTConstants.version).")
-                BTTLog.success("✓ BTTInstrumentor updated successfully.")
-            }
-        }
-
         requireBTTVersion(xcodeprojPath: xcodeprojPath)
 
         // ── Resolve targets ───────────────────────────────────────────────────
+        let projectDir = (xcodeprojPath as NSString).deletingLastPathComponent
         let store      = BTTTargetStore(projectDir: projectDir)
         store.saveXcodeprojName(xcodeprojPath)
+
+        // ── Set up .btt folder early so update check can compare binaries ─────
+        let bttDir        = (projectDir as NSString).appendingPathComponent(BTTConstants.bttFolderName)
+        let bttDirExisted = FileManager.default.fileExists(atPath: bttDir)
+        let writer        = BTTScriptWriter(projectDir: projectDir)
+
+        if !bttDirExisted {
+            try? FileManager.default.createDirectory(atPath: bttDir, withIntermediateDirectories: true)
+            BTTLog.verbose("Created .btt folder")
+        }
+
+        // ── Check for newer version ───────────────────────────────────────────
+        let wasUpdated = writer.promptUpdateIfAvailable()
+        if wasUpdated && !store.targets.isEmpty {
+            switch writer.writeInstrumentScript() {
+            case .written:            BTTLog.verbose("Updated \(BTTConstants.scriptFileName)")
+            case .unchanged:          BTTLog.verbose("\(BTTConstants.scriptFileName) already up to date")
+            case .failed(let reason): BTTLog.warn("Script update failed — \(reason)")
+            }
+            store.saveXcodeprojName(xcodeprojPath)
+        }
 
         let resolver   = BTTProjectResolver(args: args)
         let allTargets = resolver.getTargets(in: xcodeprojPath)
@@ -52,13 +58,8 @@ final class BTTCommand {
 
         let selected = promptTargetSelection(store: store, allTargets: allTargets)
 
-        // ── Set up .btt folder ────────────────────────────────────────────────
-        let bttDir        = (projectDir as NSString).appendingPathComponent(BTTConstants.bttFolderName)
-        let bttDirExisted = FileManager.default.fileExists(atPath: bttDir)
-
-        if !bttDirExisted {
-            try? FileManager.default.createDirectory(atPath: bttDir, withIntermediateDirectories: true)
-            BTTLog.verbose("Created .btt folder")
+        if !store.isInstrumented(selected) {
+            requireBlueTriangle(xcodeprojPath: xcodeprojPath, target: selected)
         }
 
         let binaryResult = writer.copyBinary()
@@ -73,11 +74,9 @@ final class BTTCommand {
             exit(1)
         }
 
-        // ── Inject pre-action (also writes tracker dependency) ────────────────
-        let buildPhase     = BTTBuildPhase(xcodeprojPath: xcodeprojPath)
-        let preActionResult = buildPhase.addPreAction(for: selected)
-        let trackerResult   = preActionResult.trackerResult
-        let matchingSchemes = preActionResult.matchedSchemes
+        // ── Inject pre-action ─────────────────────────────────────────────────
+        let buildPhase      = BTTBuildPhase(xcodeprojPath: xcodeprojPath)
+        let matchingSchemes = buildPhase.addPreAction(for: selected)
         BTTLog.verbose("Created \(BTTConstants.configFileName)")
 
         let scriptResult = writer.writeInstrumentScript()
@@ -99,16 +98,11 @@ final class BTTCommand {
             BTTLog.verbose("Pre-action present for target \(selected) in scheme(s) \(matchingSchemes.joined(separator: ", "))")
         }
 
-        if trackerResult == .failed {
-            BTTLog.warn("\(BTTConstants.bttSwiftUITrackerProduct) dependency could not be added to '\(selected)'.")
-            BTTLog.warn("  ↳ check that the \(BTTConstants.bttProductName) package is added to this target.")
-        }
 
-        let setupSucceeded = !matchingSchemes.isEmpty && trackerResult.isLinked
+        let setupSucceeded = !matchingSchemes.isEmpty
         if setupSucceeded {
-            let weAddedItBefore = store.didAddBTTSwiftUITracker(for: selected)
-            let weAddedItNow    = trackerResult == .added
-            store.add(selected, bttSwiftUITrackerAdded: weAddedItBefore || weAddedItNow)
+            store.add(selected)
+            store.saveXcodeprojName(xcodeprojPath)
         } else {
             store.remove(selected)
         }
@@ -118,10 +112,7 @@ final class BTTCommand {
             return
         }
 
-        let bttBinary       = (projectDir as NSString)
-            .appendingPathComponent("\(BTTConstants.bttFolderName)/\(BTTConstants.binaryName)")
-        let installedVersion = BTTVersionChecker.binaryVersion(at: bttBinary) ?? BTTConstants.version
-        BTTLog.success("Successfully installed BTTInstrumentor \(installedVersion) to project \(projName).xcodeproj target \(selected)")
+        BTTLog.success("Successfully installed BTTInstrumentor \(BTTConstants.version) to project \(projName).xcodeproj target \(selected)")
 
         promptImmediateInstrumentation(for: selected, in: xcodeprojPath, resolver: resolver)
     }
@@ -161,7 +152,21 @@ final class BTTCommand {
         var injectedViews = 0
         let start         = Date()
 
+        let objectFileDir = ProcessInfo.processInfo.environment["OBJECT_FILE_DIR"]
         for file in files {
+            guard !injector.isIgnored(file: file) else { continue }
+
+            let isModified = isFileModifiedSinceLastCompile(file, objectFileDir: objectFileDir)
+            let isInjected = injector.isInjected(file: file)
+
+            if isModified && isInjected {
+                // File changed and was previously injected — strip and re-inject
+                injector.revert(file: file)
+            } else if !isModified && isInjected {
+                // File unchanged and already injected — nothing to do
+                continue
+            }
+            // Remaining cases: modified+not-injected, or not-modified+not-injected → inject
             let count = injector.inject(file: file)
             if count > 0 {
                 injectedViews += count
@@ -356,18 +361,27 @@ final class BTTCommand {
     }
 
     // MARK: - Private helpers
+    private func requireBTTVersion(xcodeprojPath: String) {
+        guard BTTVersionChecker(xcodeprojPath: xcodeprojPath).checkAndProceed() else { exit(0) }
+    }
+
+    private func requireBlueTriangle(xcodeprojPath: String, target: String) {
+        guard let xcodeproj = try? XcodeProj(path: Path(xcodeprojPath)),
+              let native = xcodeproj.pbxproj.nativeTargets.first(where: { $0.name == target })
+        else { return }
+        let linked = (native.packageProductDependencies ?? []).map { $0.productName }
+        guard !linked.contains(BTTConstants.bttProductName) else { return }
+        BTTLog.error("\(BTTConstants.bttProductName) is not linked to '\(target)'.")
+        BTTLog.error("  ↳ Add BlueTriangle SDK to your target in Xcode before running BTTInstrumentor.")
+        exit(1)
+    }
+
     private func requireXcodeproj() -> String {
         guard let path = BTTProjectResolver(args: args).resolveXcodeproj() else {
             BTTLog.error("No .xcodeproj found in \(args.rootPath)")
             exit(1)
         }
         return path
-    }
-
-    private func requireBTTVersion(xcodeprojPath: String) {
-        guard BTTVersionChecker(xcodeprojPath: xcodeprojPath).checkAndProceed() else {
-            exit(0)
-        }
     }
 
     private func promptTargetSelection(store: BTTTargetStore, allTargets: [String]) -> String {
@@ -439,9 +453,9 @@ final class BTTCommand {
             let resolver   = BTTProjectResolver(args: args)
             let buildPhase = BTTBuildPhase(xcodeprojPath: xcodeprojPath)
             for target in resolver.getTargets(in: xcodeprojPath) {
-                let result = buildPhase.addPreAction(for: target)
-                if result.trackerResult.isLinked {
-                    store.add(target, bttSwiftUITrackerAdded: result.trackerResult == .added)
+                let matchedSchemes = buildPhase.addPreAction(for: target)
+                if !matchedSchemes.isEmpty {
+                    store.add(target)
                 }
             }
         }
@@ -450,6 +464,21 @@ final class BTTCommand {
     private func removeBttFolder(projectDir: String) {
         let bttDir = (projectDir as NSString).appendingPathComponent(BTTConstants.bttFolderName)
         try? FileManager.default.removeItem(atPath: bttDir)
+    }
+
+    /// Returns true if the Swift file is newer than its compiled .o counterpart.
+    /// OBJECT_FILE_DIR is always set by Xcode when instrument runs via pre-action.
+    /// Falls back to true when .o doesn't exist yet (clean/first build).
+    private func isFileModifiedSinceLastCompile(_ swiftFile: String, objectFileDir: String?) -> Bool {
+        guard let objDir = objectFileDir else { return true }
+        let baseName = ((swiftFile as NSString).lastPathComponent as NSString).deletingPathExtension
+        let objFile  = (objDir as NSString).appendingPathComponent("\(baseName).o")
+        let fm       = FileManager.default
+        guard fm.fileExists(atPath: objFile),
+              let swiftMtime = (try? fm.attributesOfItem(atPath: swiftFile))?[.modificationDate] as? Date,
+              let objMtime   = (try? fm.attributesOfItem(atPath: objFile))?[.modificationDate] as? Date
+        else { return true }
+        return swiftMtime > objMtime
     }
 }
 

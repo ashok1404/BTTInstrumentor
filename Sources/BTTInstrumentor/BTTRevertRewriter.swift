@@ -9,53 +9,216 @@ import SwiftSyntax
 import SwiftParser
 
 final class BTTRevertRewriter: SyntaxRewriter {
-    var revertedViews =  Set<String>()
+    var revertedViews = Set<String>()
 
-    override func visit(_ node: SourceFileSyntax) -> SourceFileSyntax {
-        let visited  = super.visit(node)
-        let before   = visited.statements.count
-        let filtered = visited.statements.filter { stmt in
-            guard let d = stmt.item.as(ImportDeclSyntax.self) else { return true }
-            let isImportBTT = d.path.trimmedDescription == BTTConstants.importModule
-            return !isImportBTT
-        }
-
-        guard filtered.count != before else {
-            return visited
-        }
-
-        return visited.with(\.statements, filtered)
-    }
-
-    // MARK: - Struct — remove @BTTTrack
+    // MARK: - Struct — remove .bttTrackScreen from body
     override func visit(_ node: StructDeclSyntax) -> DeclSyntax {
         let name = node.name.text
+        guard bodyHasTrackScreen(node) else { return DeclSyntax(node) }
 
-        guard node.attributes.contains(where: { attr in
-            guard case .attribute(let a) = attr else { return false }
-            return a.attributeName.trimmedDescription == BTTConstants.trackAttribute
-        }) else {
-            return DeclSyntax(node)
-        }
+        let newMembers = MemberBlockItemListSyntax(node.memberBlock.members.map { member in
+            guard let varDecl = member.decl.as(VariableDeclSyntax.self),
+                  let binding = varDecl.bindings.first(where: { $0.pattern.trimmedDescription == "body" }),
+                  let accessorBlock = binding.accessorBlock
+            else { return member }
 
-        let filtered = node.attributes.filter { attr in
-            guard case .attribute(let a) = attr else { return true }
-            return a.attributeName.trimmedDescription != BTTConstants.trackAttribute
-        }
+            let stmts: [CodeBlockItemSyntax]
+            switch accessorBlock.accessors {
+            case .getter(let items): stmts = Array(items)
+            case .accessors(let list):
+                guard let getAccessor = list.first(where: {
+                    $0.accessorSpecifier.tokenKind == .keyword(.get)
+                }), let body = getAccessor.body else { return member }
+                stmts = Array(body.statements)
+            }
 
-        // Restore the leading trivia that was originally on @BTTTrack onto the struct keyword
-        let originalTrivia = node.attributes.first.flatMap { attr -> Trivia? in
-            guard case .attribute(let a) = attr,
-                  a.attributeName.trimmedDescription == BTTConstants.trackAttribute
-            else { return nil }
-            return a.leadingTrivia
-        } ?? node.leadingTrivia
+            let newStmts = revertStmts(stmts)
 
-        let modified = node
-            .with(\.attributes, filtered)
-            .with(\.leadingTrivia, originalTrivia)
+            let newAccessorBlock: AccessorBlockSyntax
+            switch accessorBlock.accessors {
+            case .getter:
+                newAccessorBlock = accessorBlock.with(\.accessors, .getter(CodeBlockItemListSyntax(newStmts)))
+            case .accessors(let list):
+                var newList = Array(list)
+                guard let idx = newList.firstIndex(where: {
+                    $0.accessorSpecifier.tokenKind == .keyword(.get)
+                }), let body = newList[idx].body else { return member }
+                let newBody = body.with(\.statements, CodeBlockItemListSyntax(newStmts))
+                newList[idx] = newList[idx].with(\.body, newBody)
+                newAccessorBlock = accessorBlock.with(\.accessors, .accessors(AccessorDeclListSyntax(newList)))
+            }
 
+            let newBinding = binding.with(\.accessorBlock, newAccessorBlock)
+            let newBindings = PatternBindingListSyntax(varDecl.bindings.map {
+                $0.pattern.trimmedDescription == "body" ? newBinding : $0
+            })
+            return member.with(\.decl, DeclSyntax(varDecl.with(\.bindings, newBindings)))
+        })
+
+        let modified = node.with(\.memberBlock, node.memberBlock.with(\.members, newMembers))
         revertedViews.insert(name)
         return DeclSyntax(modified)
+    }
+
+    // MARK: - Statement list revert
+
+    private func revertStmts(_ stmts: [CodeBlockItemSyntax]) -> [CodeBlockItemSyntax] {
+        stmts.map { revertItem($0) }
+    }
+
+    private func revertItem(_ item: CodeBlockItemSyntax) -> CodeBlockItemSyntax {
+        switch item.item {
+        case .expr(let expr):
+            if let ifExpr = expr.as(IfExprSyntax.self) {
+                return item.with(\.item, .expr(ExprSyntax(revertIf(ifExpr))))
+            }
+            return item.with(\.item, .expr(stripTrackScreen(from: expr)))
+        case .stmt(let stmt):
+            if let newStmt = revertStatement(stmt) {
+                return item.with(\.item, .stmt(newStmt))
+            }
+            return item
+        case .decl(let decl):
+            if let ifConfig = decl.as(IfConfigDeclSyntax.self) {
+                return item.with(\.item, .decl(DeclSyntax(revertIfConfig(ifConfig))))
+            }
+            return item
+        @unknown default:
+            return item
+        }
+    }
+
+    // MARK: - Statement revert
+
+    private func revertStatement(_ stmt: StmtSyntax) -> StmtSyntax? {
+        // return
+        if let ret = stmt.as(ReturnStmtSyntax.self), let expr = ret.expression {
+            return StmtSyntax(ret.with(\.expression, stripTrackScreen(from: expr)))
+        }
+        // guard
+        if let guardStmt = stmt.as(GuardStmtSyntax.self) {
+            return StmtSyntax(guardStmt.with(\.body, revertCodeBlock(guardStmt.body)))
+        }
+        // if/else
+        if let exprStmt = stmt.as(ExpressionStmtSyntax.self),
+           let ifExpr = exprStmt.expression.as(IfExprSyntax.self) {
+            let newIf = revertIf(ifExpr)
+            return StmtSyntax(exprStmt.with(\.expression, ExprSyntax(newIf)))
+        }
+        if let ifStmt = stmt.as(IfExprSyntax.self) {
+            let newIf = revertIf(ifStmt)
+            return StmtSyntax(ExpressionStmtSyntax(expression: ExprSyntax(newIf)))
+        }
+        // switch
+        if let exprStmt = stmt.as(ExpressionStmtSyntax.self),
+           let switchStmt = exprStmt.expression.as(SwitchExprSyntax.self) {
+            return StmtSyntax(exprStmt.with(\.expression, ExprSyntax(revertSwitch(switchStmt))))
+        }
+        if let switchStmt = stmt.as(SwitchExprSyntax.self) {
+            return StmtSyntax(ExpressionStmtSyntax(expression: ExprSyntax(revertSwitch(switchStmt))))
+        }
+        return nil
+    }
+
+    // MARK: - if/else revert
+    private func revertIf(_ node: IfExprSyntax) -> IfExprSyntax {
+        let newBody = revertCodeBlock(node.body)
+        let newElse: IfExprSyntax.ElseBody?
+        switch node.elseBody {
+        case .codeBlock(let block): newElse = .codeBlock(revertCodeBlock(block))
+        case .ifExpr(let nested):   newElse = .ifExpr(revertIf(nested))
+        case .none:                 newElse = nil
+        }
+        return node.with(\.body, newBody).with(\.elseBody, newElse)
+    }
+
+    private func revertCodeBlock(_ block: CodeBlockSyntax) -> CodeBlockSyntax {
+        block.with(\.statements, CodeBlockItemListSyntax(revertStmts(Array(block.statements))))
+    }
+
+    // MARK: - switch revert
+    private func revertSwitch(_ node: SwitchExprSyntax) -> SwitchExprSyntax {
+        let newCases = SwitchCaseListSyntax(node.cases.map { element -> SwitchCaseListSyntax.Element in
+            guard case .switchCase(let switchCase) = element else { return element }
+            return .switchCase(switchCase.with(\.statements, CodeBlockItemListSyntax(revertStmts(Array(switchCase.statements)))))
+        })
+        return node.with(\.cases, newCases)
+    }
+
+    // MARK: - #if revert
+    private func revertIfConfig(_ node: IfConfigDeclSyntax) -> IfConfigDeclSyntax {
+        let newClauses = node.clauses.map { clause -> IfConfigClauseSyntax in
+            guard let elements = clause.elements,
+                  case .statements(let stmts) = elements
+            else { return clause }
+            return clause.with(\.elements, .statements(CodeBlockItemListSyntax(revertStmts(Array(stmts)))))
+        }
+        return node.with(\.clauses, IfConfigClauseListSyntax(newClauses))
+    }
+
+    // MARK: - Strip .bttTrackScreen from expression
+    private func stripTrackScreen(from expr: ExprSyntax) -> ExprSyntax {
+        // Ternary — strip from both branches
+        if let ternary = expr.as(TernaryExprSyntax.self) {
+            return ExprSyntax(ternary
+                .with(\.thenExpression, stripTrackScreen(from: ternary.thenExpression))
+                .with(\.elseExpression, stripTrackScreen(from: ternary.elseExpression))
+            )
+        }
+
+        // Any FunctionCallExpr with trailing closure (VStack, HStack, withAnimation etc)
+        // — strip .bttTrackScreen from inside the closure recursively
+        if let call = expr.as(FunctionCallExprSyntax.self) {
+            var newCall = call
+
+            // Strip from trailing closure
+            if let closure = call.trailingClosure {
+                let newStmts = revertStmts(Array(closure.statements))
+                let newClosure = closure.with(\.statements, CodeBlockItemListSyntax(newStmts))
+                newCall = newCall.with(\.trailingClosure, newClosure)
+            }
+
+            // Strip from additional trailing closures
+            if !call.additionalTrailingClosures.isEmpty {
+                let newClosures = call.additionalTrailingClosures.map { element -> MultipleTrailingClosureElementSyntax in
+                    let newStmts = revertStmts(Array(element.closure.statements))
+                    let newClosure = element.closure.with(\.statements, CodeBlockItemListSyntax(newStmts))
+                    return element.with(\.closure, newClosure)
+                }
+                newCall = newCall.with(\.additionalTrailingClosures, MultipleTrailingClosureElementListSyntax(newClosures))
+            }
+
+            // Now check if this call itself is .bttTrackScreen — strip it
+            if let member = newCall.calledExpression.as(MemberAccessExprSyntax.self),
+               member.declName.baseName.text == BTTConstants.trackModifier,
+               let base = member.base {
+                return base.with(\.trailingTrivia, expr.trailingTrivia)
+            }
+
+            // Return with cleaned closures (even if not .bttTrackScreen itself)
+            if newCall.description != call.description {
+                return ExprSyntax(newCall)
+            }
+        }
+
+        // Direct .bttTrackScreen() call — strip it
+        if let call = expr.as(FunctionCallExprSyntax.self),
+           let member = call.calledExpression.as(MemberAccessExprSyntax.self),
+           member.declName.baseName.text == BTTConstants.trackModifier,
+           let base = member.base {
+            return base.with(\.trailingTrivia, expr.trailingTrivia)
+        }
+
+        return expr
+    }
+
+    // MARK: - Helpers
+    private func bodyHasTrackScreen(_ node: StructDeclSyntax) -> Bool {
+        node.memberBlock.members.contains { member in
+            guard let varDecl = member.decl.as(VariableDeclSyntax.self),
+                  varDecl.bindings.contains(where: { $0.pattern.trimmedDescription == "body" })
+            else { return false }
+            return varDecl.description.contains(".\(BTTConstants.trackModifier)(")
+        }
     }
 }

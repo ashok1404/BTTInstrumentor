@@ -52,12 +52,6 @@
     "swift-dependencies": "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTLog.swiftdeps",
     "diagnostics": "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTLog.dia"
   },
-  "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTPackageDependency.swift": {
-    "object": "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTPackageDependency.swift.o",
-    "swiftmodule": "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTPackageDependency~partial.swiftmodule",
-    "swift-dependencies": "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTPackageDependency.swiftdeps",
-    "diagnostics": "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTPackageDependency.dia"
-  },
   "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/Sources/BTTInstrumentor/BTTProjectResolver.swift": {
     "object": "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTProjectResolver.swift.o",
     "swiftmodule": "/Users/ashoksingh/Documents/WorkingCopy/Instrumentor/BTTInstrumentor/.build/arm64-apple-macosx/release/BTTInstrumentor.build/BTTProjectResolver~partial.swiftmodule",

@@ -18,6 +18,7 @@ final class BTTDiagnostics {
     }
 
     // MARK: - check (public)
+
     func cmdCheck() {
         BTTLog.info("Looking for .xcodeproj files")
         let xcodeprojPath = requireXcodeproj()
@@ -118,12 +119,12 @@ final class BTTDiagnostics {
             for target in targets {
                 if let native = xcodeproj.pbxproj.nativeTargets.first(where: { $0.name == target }) {
                     let linkedProducts = (native.packageProductDependencies ?? []).map { $0.productName }
-                    let hasDep = linkedProducts.contains(BTTConstants.bttSwiftUITrackerProduct)
+                    let hasBTT = linkedProducts.contains(BTTConstants.bttProductName)
                     checkItem(next(),
-                        exists: hasDep,
-                        pass: "\(BTTConstants.bttSwiftUITrackerProduct) linked: \(target)",
-                        fail: "\(BTTConstants.bttSwiftUITrackerProduct) not linked in '\(target)' — run 'BTTInstrumentor install'",
-                        diagnose: "current dependencies for '\(target)': \(linkedProducts.isEmpty ? "(none)" : linkedProducts.joined(separator: ", "))"
+                        exists: hasBTT,
+                        pass: "\(BTTConstants.bttProductName) linked: \(target)",
+                        fail: "\(BTTConstants.bttProductName) not linked in '\(target)' — add BlueTriangle SDK to this target",
+                        diagnose: "current dependencies: \(linkedProducts.isEmpty ? "(none)" : linkedProducts.joined(separator: ", "))"
                     )
                 }
             }

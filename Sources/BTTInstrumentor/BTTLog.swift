@@ -22,16 +22,31 @@ enum BTTLog {
     private static let cyan   = isTTY ? "\u{001B}[0;36m" : ""
     private static let dim    = isTTY ? "\u{001B}[0;37m" : ""
 
+    static var isXcode: Bool { ProcessInfo.processInfo.environment["XCODE_VERSION_ACTUAL"] != nil }
+
     // MARK: - Public
-    static func info(_ msg: String)    { print("\(cyan)\(prefix)\(msg)\(reset)") }
-    static func success(_ msg: String) { print("\n\(green)\(prefix)\(msg)\(reset)") }
-    static func warn(_ msg: String)    { print("\n\(yellow)\(prefix)warning: \(msg)\(reset)") }
-    static func error(_ msg: String)   { print("\n\(red)\(prefix)error: \(msg)\(reset)") }
+    static func info(_ msg: String) {
+        if isXcode { fputs("note: \(prefix)\(msg)\n", stderr) }
+        else { print("\(cyan)\(prefix)\(msg)\(reset)") }
+    }
+    static func success(_ msg: String) {
+        if isXcode { fputs("note: \(prefix)\(msg)\n", stderr) }
+        else { print("\n\(green)\(prefix)\(msg)\(reset)") }
+    }
+    static func warn(_ msg: String) {
+        if isXcode { fputs("warning: \(prefix)\(msg)\n", stderr) }
+        else { print("\n\(yellow)\(prefix)warning: \(msg)\(reset)") }
+    }
+    static func error(_ msg: String) {
+        if isXcode { fputs("error: \(prefix)\(msg)\n", stderr) }
+        else { print("\n\(red)\(prefix)error: \(msg)\(reset)") }
+    }
 
     /// Prints only when BTTLog.verboseEnabled is true.
     static func verbose(_ msg: String) {
         guard verboseEnabled else { return }
-        print("\(dim)(verbose) \(prefix)\(msg)\(reset)")
+        if isXcode { fputs("[verbose] \(prefix)\(msg)\n", stderr) }
+        else { print("\(dim)(verbose) \(prefix)\(msg)\(reset)") }
     }
 
     /// Prints a prompt with no prefix and no color, then leaves the cursor on
@@ -42,8 +57,13 @@ enum BTTLog {
     /// Prints a single numbered checklist line with no prefix and no leading newline.
     /// `ok == true` → green ✓, `ok == false` → red ✗.
     static func checklist(_ msg: String, ok: Bool) {
-        let color = ok ? green : red
-        print("\(color)\(msg)\(reset)")
+        if isXcode {
+            if ok { fputs("note: \(msg)\n", stderr) }
+            else  { fputs("warning: \(msg)\n", stderr) }
+        } else {
+            let color = ok ? green : red
+            print("\(color)\(msg)\(reset)")
+        }
     }
 }
 #endif

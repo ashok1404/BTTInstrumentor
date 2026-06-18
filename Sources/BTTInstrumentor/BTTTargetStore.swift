@@ -9,10 +9,9 @@ import Foundation
 
 struct BTTTargetStore {
     private struct StoreData: Codable {
-        var version:                String
-        var xcodeprojName:          String?
-        var targets:                [String]
-        var bttSwiftUITrackerAdded: [String: Bool]
+        var version:       String
+        var xcodeprojName: String?
+        var targets:       [String]
     }
 
     private let configPath: String
@@ -32,10 +31,6 @@ struct BTTTargetStore {
         targets.contains(target)
     }
 
-    func didAddBTTSwiftUITracker(for target: String) -> Bool {
-        load()?.bttSwiftUITrackerAdded[target] ?? false
-    }
-
     func savedVersion() -> String? {
         load()?.version
     }
@@ -45,16 +40,15 @@ struct BTTTargetStore {
     /// Saves just the .xcodeproj filename — never the full path.
     func saveXcodeprojName(_ xcodeprojPath: String) {
         let name = URL(fileURLWithPath: xcodeprojPath).lastPathComponent
-        var data = load() ?? StoreData(version: BTTConstants.version, xcodeprojName: nil, targets: [], bttSwiftUITrackerAdded: [:])
+        var data = load() ?? StoreData(version: BTTConstants.version, xcodeprojName: nil, targets: [])
         guard data.xcodeprojName != name else { return }
         data.xcodeprojName = name
         save(data)
     }
 
-    func add(_ target: String, bttSwiftUITrackerAdded: Bool = false) {
-        var data = load() ?? StoreData(version: BTTConstants.version, xcodeprojName: nil, targets: [], bttSwiftUITrackerAdded: [:])
+    func add(_ target: String) {
+        var data = load() ?? StoreData(version: BTTConstants.version, xcodeprojName: nil, targets: [])
         if !data.targets.contains(target) { data.targets.append(target) }
-        data.bttSwiftUITrackerAdded[target] = bttSwiftUITrackerAdded
         data.version = BTTConstants.version
         save(data)
     }
@@ -62,7 +56,6 @@ struct BTTTargetStore {
     func remove(_ target: String) {
         guard var data = load() else { return }
         data.targets.removeAll { $0 == target }
-        data.bttSwiftUITrackerAdded.removeValue(forKey: target)
         save(data)
     }
 
@@ -74,7 +67,8 @@ struct BTTTargetStore {
             BTTLog.warn("\(BTTConstants.configFileName) unreadable — starting fresh")
             return nil
         }
-        guard let data = try? JSONDecoder().decode(StoreData.self, from: raw) else {
+        let decoder = JSONDecoder()
+        guard let data = try? decoder.decode(StoreData.self, from: raw) else {
             BTTLog.warn("\(BTTConstants.configFileName) corrupted — starting fresh")
             try? FileManager.default.removeItem(atPath: configPath)
             return nil
