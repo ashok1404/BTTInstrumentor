@@ -41,15 +41,16 @@ final class BTTScriptWriter {
     func writeInstrumentScript() -> BTTWriteResult {
         let scriptPath  = (bttDir as NSString).appendingPathComponent(BTTConstants.scriptFileName)
         let verboseFlag = BTTLog.verboseEnabled ? " --verbose" : ""
+        let flags       = "--non-interactive\(verboseFlag)"
 
         let content = """
         #!/bin/bash
         export PATH="$PATH:/usr/local/bin"
         export PATH="$PATH:/opt/homebrew/bin"
         if [[ -x "$SRCROOT/\(BTTConstants.bttFolderName)/\(BTTConstants.binaryName)" ]]; then
-            "$SRCROOT/\(BTTConstants.bttFolderName)/\(BTTConstants.binaryName)" instrument "$SRCROOT"\(verboseFlag)
+            "$SRCROOT/\(BTTConstants.bttFolderName)/\(BTTConstants.binaryName)" instrument "$SRCROOT" \(flags)
         elif [[ -x "$(command -v \(BTTConstants.binaryName))" ]]; then
-            "$(command -v \(BTTConstants.binaryName))" instrument "$SRCROOT"\(verboseFlag)
+            "$(command -v \(BTTConstants.binaryName))" instrument "$SRCROOT" \(flags)
         else
             exit 0
         fi
@@ -73,6 +74,8 @@ final class BTTScriptWriter {
 
     @discardableResult
     func promptUpdateIfAvailable() -> Bool {
+        guard !BTTLog.nonInteractive else { return false }
+
         let dest = (bttDir as NSString).appendingPathComponent(BTTConstants.binaryName)
 
         guard fm.fileExists(atPath: dest) else { return false }

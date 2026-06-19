@@ -194,6 +194,11 @@ final class BTTCommand {
             return
         }
 
+        guard !args.nonInteractive else {
+            BTTLog.warn("Uninstall requires interactive mode — run from terminal.")
+            return
+        }
+
         BTTLog.verbose("Instrumented targets: \(instrumented.joined(separator: ", "))")
 
         BTTLog.prompt("\nWhich target do you want to remove?\n\n")
@@ -331,7 +336,9 @@ final class BTTCommand {
         }
 
         BTTLog.info("Found \(swiftUIFiles) SwiftUI file(s) and \(swiftUIViews) view(s)\n")
-        
+
+        guard !args.nonInteractive else { return }
+
         if swiftUIFiles > 0 {
             BTTLog.prompt("Instrument all? (y/n): ")
             let answer = readLine()?.trimmingCharacters(in: .whitespaces).lowercased()
@@ -389,6 +396,8 @@ final class BTTCommand {
             BTTLog.error("No targets found in project.")
             exit(1)
         }
+
+        guard !args.nonInteractive else { return allTargets[0] }
 
         BTTLog.prompt("\nWhich target do you want to instrument?\n\n")
         allTargets.enumerated().forEach { i, t in

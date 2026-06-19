@@ -43,7 +43,7 @@ final class BTTProjectResolver {
         case 0: return nil
         case 1: BTTLog.verbose("Using: \(found[0])"); return found[0]
         default:
-            guard isatty(STDIN_FILENO) != 0 else {
+            guard !args.nonInteractive else {
                 let rootStore = BTTTargetStore(projectDir: args.rootPath)
                 let selected: String
 
@@ -93,10 +93,9 @@ final class BTTProjectResolver {
     }
 
     // MARK: - Swift files
-    /// Returns all Swift files for a target by merging three sources:
+    /// Returns all Swift files for a target by merging two sources:
     /// 1. File references declared in xcodeproj
-    /// 2. Swift files from local SPM package dependencies
-    /// 3. Folder scan fallback when the target uses a folder reference
+    /// 2. Folder scan fallback when the target uses a folder reference
     func getSwiftFiles(for target: String, in xcodeprojPath: String) -> [String] {
         var files = [String]()
         var seen  = Set<String>()
@@ -106,7 +105,6 @@ final class BTTProjectResolver {
         }
 
         add(sourceFileRefs(for: target, in: xcodeprojPath))
-        add(localPackageFiles(for: target, in: xcodeprojPath))
 
         if files.isEmpty {
             let projDir      = Path(xcodeprojPath).parent().string

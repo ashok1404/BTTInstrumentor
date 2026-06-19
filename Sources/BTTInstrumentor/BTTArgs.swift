@@ -8,12 +8,13 @@
 import Foundation
 
 struct BTTArgs {
-    var command:     String  = ""
-    var projectPath: String? = nil
-    var target:      String? = nil
-    var scheme:      String? = nil
-    var verbose:     Bool    = false
-    var rootPath:    String  = FileManager.default.currentDirectoryPath
+    var command:        String  = ""
+    var projectPath:    String? = nil
+    var target:         String? = nil
+    var scheme:         String? = nil
+    var verbose:        Bool    = false
+    var nonInteractive: Bool    = false   // true when invoked from btt_instrument.sh (Xcode build)
+    var rootPath:       String  = FileManager.default.currentDirectoryPath
 
     /// Parses CommandLine.arguments and returns a populated BTTArgs value.
     static func parse() -> BTTArgs {
@@ -34,6 +35,9 @@ struct BTTArgs {
 
             case "--verbose":
                 result.verbose = true
+
+            case "--non-interactive":
+                result.nonInteractive = true
 
             default:
                 guard !remaining[i].hasPrefix("--") else { break }

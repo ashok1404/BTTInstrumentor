@@ -9,8 +9,9 @@
 import Foundation
 
 enum BTTLog {
-    // MARK: - Verbose flag
-    static var verboseEnabled: Bool = false
+    // MARK: - Flags
+    static var verboseEnabled:  Bool = false
+    static var nonInteractive:  Bool = false   // true when invoked from btt_instrument.sh (Xcode build)
     static var prefix: String = "BTTInstrumentor: "
 
     // MARK: - Private

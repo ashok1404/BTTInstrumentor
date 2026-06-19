@@ -37,7 +37,7 @@ final class BTTVersionChecker {
     @discardableResult
     func checkAndProceed() -> Bool {
         if BTTConstants.isForkedVersion {
-            if isatty(STDIN_FILENO) != 0 {
+            if !BTTLog.nonInteractive {
                 BTTLog.warn("BTTConstants.isForkedVersion = true — version check skipped. Set to false before release.")
                 return true
             } else {

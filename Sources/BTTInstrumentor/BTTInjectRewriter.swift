@@ -16,19 +16,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
     var filePath       = ""  // set by BTTInjectRevertHandler before visiting
     var hitDepthLimit  = false
 
-    // Known Void-returning functions that are valid inside a ViewBuilder body but produce
-    // no View. Lowercase custom view wrappers (e.g. myView()) are intentionally NOT listed
-    // so they remain injectable.
-    static let knownVoidFunctions: Set<String> = [
-        "print", "debugPrint", "NSLog",
-        "os_log", "os_signpost",
-        "assert", "assertionFailure",
-        "precondition", "preconditionFailure",
-        "fatalError", "exit",
-    ]
-
     // MARK: - Import
-
     override func visit(_ node: SourceFileSyntax) -> SourceFileSyntax {
         let visited = super.visit(node)
         guard injectedViews.count > 0 else { return visited }
@@ -191,8 +179,10 @@ final class BTTInjectRewriter: SyntaxRewriter {
                     continue
                 }
 
-                // Direct view expression — inject, no depth cost
-                if let newExpr = appendTrackScreen(to: expr, viewName: viewName) {
+                // Direct view expression — inject, no depth cost.
+                // isFinalCandidate: true because reversed iteration guarantees this is the
+                // last injectable expression in the scope — so a lowercase call must be a View.
+                if let newExpr = appendTrackScreen(to: expr, viewName: viewName, isFinalCandidate: true) {
                     result[i] = item.with(\.item, .expr(newExpr))
                     injected = true; expressionDone = true
                 }
@@ -205,7 +195,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
                 // are recognised as side effects and skipped.
                 if let ret = stmt.as(ReturnStmtSyntax.self),
                    let expr = ret.expression,
-                   let newExpr = appendTrackScreen(to: expr, viewName: viewName) {
+                   let newExpr = appendTrackScreen(to: expr, viewName: viewName, isFinalCandidate: true) {
                     result[i] = item.with(\.item, .stmt(StmtSyntax(ret.with(\.expression, newExpr))))
                     injected = true; expressionDone = true
 
@@ -357,13 +347,13 @@ final class BTTInjectRewriter: SyntaxRewriter {
     }
 
     // MARK: - Append .bttTrackScreen
-    private func appendTrackScreen(to expr: ExprSyntax, viewName: String) -> ExprSyntax? {
+    private func appendTrackScreen(to expr: ExprSyntax, viewName: String, isFinalCandidate: Bool = false) -> ExprSyntax? {
         guard !expr.description.contains(".\(BTTConstants.trackModifier)(") else { return nil }
 
         // Ternary — both branches, no depth cost (same level)
         if let ternary = expr.as(TernaryExprSyntax.self) {
-            let newThen = appendTrackScreen(to: ternary.thenExpression, viewName: viewName) ?? ternary.thenExpression
-            let newElse = appendTrackScreen(to: ternary.elseExpression, viewName: viewName) ?? ternary.elseExpression
+            let newThen = appendTrackScreen(to: ternary.thenExpression, viewName: viewName, isFinalCandidate: true) ?? ternary.thenExpression
+            let newElse = appendTrackScreen(to: ternary.elseExpression, viewName: viewName, isFinalCandidate: true) ?? ternary.elseExpression
             return ExprSyntax(ternary.with(\.thenExpression, newThen).with(\.elseExpression, newElse))
         }
 
@@ -386,14 +376,14 @@ final class BTTInjectRewriter: SyntaxRewriter {
             var changed = false
             for (i, element) in elements.enumerated() {
                 if let ut = element.as(UnresolvedTernaryExprSyntax.self),
-                   let newThen = appendTrackScreen(to: ut.thenExpression, viewName: viewName) {
+                   let newThen = appendTrackScreen(to: ut.thenExpression, viewName: viewName, isFinalCandidate: true) {
                     elements[i] = ExprSyntax(ut.with(\.thenExpression, newThen))
                     changed = true
                 }
             }
             // Last element is the final else branch
             let lastIdx = elements.count - 1
-            if let newLast = appendTrackScreen(to: elements[lastIdx], viewName: viewName) {
+            if let newLast = appendTrackScreen(to: elements[lastIdx], viewName: viewName, isFinalCandidate: true) {
                 elements[lastIdx] = newLast
                 changed = true
             }
@@ -408,13 +398,13 @@ final class BTTInjectRewriter: SyntaxRewriter {
            let ref = call.calledExpression.as(DeclReferenceExprSyntax.self),
            ref.baseName.text == "AnyView",
            let firstArg = call.arguments.first {
-            guard let newArgExpr = appendTrackScreen(to: firstArg.expression, viewName: viewName) else { return nil }
+            guard let newArgExpr = appendTrackScreen(to: firstArg.expression, viewName: viewName, isFinalCandidate: true) else { return nil }
             let newArg = firstArg.with(\.expression, newArgExpr)
             let newArgs = LabeledExprListSyntax([newArg])
             return ExprSyntax(call.with(\.arguments, newArgs))
         }
 
-        guard isViewExpression(expr) else { return nil }
+        guard isViewExpression(expr, isFinalCandidate: isFinalCandidate) else { return nil }
 
         let indent = lastModifierIndent(of: expr) ?? extractIndent(from: expr.leadingTrivia)
 
@@ -454,7 +444,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
     }
 
     // MARK: - isViewExpression
-    private func isViewExpression(_ expr: ExprSyntax) -> Bool {
+    private func isViewExpression(_ expr: ExprSyntax, isFinalCandidate: Bool = false) -> Bool {
         if let ref = expr.as(DeclReferenceExprSyntax.self),
            ref.baseName.text.hasPrefix("$") { return false }
 
@@ -468,13 +458,20 @@ final class BTTInjectRewriter: SyntaxRewriter {
         if let tryExpr = expr.as(TryExprSyntax.self),
            tryExpr.questionOrExclamationMark?.tokenKind == .postfixQuestionMark { return false }
 
-        // Block known Void-returning functions that are legal in a ViewBuilder body
-        // but produce no View. Custom lowercase view wrappers are still allowed through.
-        if let call = expr.as(FunctionCallExprSyntax.self),
-           let ref = call.calledExpression.as(DeclReferenceExprSyntax.self),
-           BTTInjectRewriter.knownVoidFunctions.contains(ref.baseName.text) { return false }
+        // For function calls we cannot know the return type without the compiler's type checker.
+        // We use two reliable AST signals plus one contextual one:
+        //   • Uppercase first letter  →  View type constructor (Text, VStack, MyCard)
+        //   • Callee is a member access  →  already a View with modifier chain (.padding() etc.)
+        //   • isFinalCandidate  →  sole/last expression in its scope, so the compiler already
+        //     guarantees it returns a View (a Void call here is already a compile error in the
+        //     user's own code). Safe to inject on lowercase calls like myView().
+        if let call = expr.as(FunctionCallExprSyntax.self) {
+            if let ref = call.calledExpression.as(DeclReferenceExprSyntax.self) {
+                return ref.baseName.text.first?.isUppercase == true || isFinalCandidate
+            }
+            return call.calledExpression.is(MemberAccessExprSyntax.self)
+        }
 
-        if expr.is(FunctionCallExprSyntax.self)   { return true }
         if expr.is(MemberAccessExprSyntax.self)   { return true }
         if expr.is(DeclReferenceExprSyntax.self)  { return true }
         if expr.is(TryExprSyntax.self)            { return true }

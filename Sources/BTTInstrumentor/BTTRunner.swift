@@ -14,6 +14,7 @@ final class BTTRunner {
     init(args: BTTArgs) {
         self.args = args
         BTTLog.verboseEnabled = args.verbose
+        BTTLog.nonInteractive = args.nonInteractive
     }
 
     func run() {

@@ -38,7 +38,7 @@ enum BTTConstants {
     // MARK: - Injection
     static let injectionDepth = 3  // 1 = top only, 2 = one level into control flow, etc.
     static let xcodeprojSearchDepth  = 4
-    static let excludedScanPaths     = ["/Pods/", "/.build/", "/DerivedData/"]
+    static let excludedScanPaths     = ["/Pods/", "/.build/", "/DerivedData/", "/Packages/", "/LocalPackages/"]
 
     // MARK: - Package.resolved candidates
     static let packageResolvedCandidates = [
