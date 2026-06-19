@@ -58,9 +58,9 @@ enum BTTConstants {
     BTTInstrumentor — BlueTriangle SwiftUI Screen Tracking
 
     USAGE
-      BTTInstrumentor install    [project.xcodeproj] [--verbose]
-      BTTInstrumentor uninstall  [project.xcodeproj] [--verbose]
-      BTTInstrumentor check      [project.xcodeproj]
+      BTTInstrumentor install  [--verbose]
+      BTTInstrumentor uninstall  [--verbose]
+      BTTInstrumentor check 
 
     COMMANDS
       install     Adds scheme pre-action, saves target, and optionally

@@ -12,18 +12,6 @@ enum BTTWriteResult {
     case unchanged
     case written
     case failed(reason: String)
-
-    var succeeded: Bool {
-        switch self {
-        case .unchanged, .written: return true
-        case .failed: return false
-        }
-    }
-
-    var wasWritten: Bool {
-        if case .written = self { return true }
-        return false
-    }
 }
 
 final class BTTScriptWriter {

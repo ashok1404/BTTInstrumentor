@@ -31,10 +31,6 @@ struct BTTTargetStore {
         targets.contains(target)
     }
 
-    func savedVersion() -> String? {
-        load()?.version
-    }
-
     func savedXcodeprojName() -> String? { load()?.xcodeprojName }
 
     /// Saves just the .xcodeproj filename — never the full path.

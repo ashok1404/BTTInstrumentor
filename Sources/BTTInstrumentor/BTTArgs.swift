@@ -10,8 +10,6 @@ import Foundation
 struct BTTArgs {
     var command:        String  = ""
     var projectPath:    String? = nil
-    var target:         String? = nil
-    var scheme:         String? = nil
     var verbose:        Bool    = false
     var nonInteractive: Bool    = false   // true when invoked from btt_instrument.sh (Xcode build)
     var rootPath:       String  = FileManager.default.currentDirectoryPath
@@ -27,12 +25,6 @@ struct BTTArgs {
         var i = 0
         while i < remaining.count {
             switch remaining[i] {
-            case "--target":
-                if i + 1 < remaining.count { result.target = remaining[i + 1]; i += 1 }
-
-            case "--scheme":
-                if i + 1 < remaining.count { result.scheme = remaining[i + 1]; i += 1 }
-
             case "--verbose":
                 result.verbose = true
 

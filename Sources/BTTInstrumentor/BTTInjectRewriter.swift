@@ -7,14 +7,11 @@
 
 import SwiftSyntax
 import SwiftParser
-import SwiftSyntaxBuilder
 import Foundation
 
 final class BTTInjectRewriter: SyntaxRewriter {
-    var injectedViews  = [String]()
-    var skippedViews   = [String]()
-    var filePath       = ""  // set by BTTInjectRevertHandler before visiting
-    var hitDepthLimit  = false
+    var injectedViews = [String]()
+    var filePath      = ""  // set by BTTInjectRevertHandler before visiting
 
     // MARK: - Import
     override func visit(_ node: SourceFileSyntax) -> SourceFileSyntax {
@@ -69,11 +66,9 @@ final class BTTInjectRewriter: SyntaxRewriter {
             return DeclSyntax(node)
         }
 
-        hitDepthLimit = false
         guard let newNode = injectTrackScreen(into: node, viewName: name) else {
             let fileName = filePath.isEmpty ? name : URL(fileURLWithPath: filePath).lastPathComponent
             BTTLog.warn("\(fileName): \(name) body is too complex — instrument manually")
-            skippedViews.append(name)
             return DeclSyntax(node)
         }
 
@@ -159,7 +154,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
 
                 // if/else as expression — control flow, costs 1 depth
                 if let ifExpr = expr.as(IfExprSyntax.self) {
-                    guard currentDepth < BTTConstants.injectionDepth else { hitDepthLimit = true; break }
+                    guard currentDepth < BTTConstants.injectionDepth else { break }
                     let (newIf, ok) = injectIntoIf(ifExpr, viewName: viewName, currentDepth: currentDepth + 1)
                     if ok {
                         result[i] = item.with(\.item, .expr(ExprSyntax(newIf)))
@@ -170,7 +165,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
 
                 // switch as expression — control flow, costs 1 depth
                 if let switchExpr = expr.as(SwitchExprSyntax.self) {
-                    guard currentDepth < BTTConstants.injectionDepth else { hitDepthLimit = true; break }
+                    guard currentDepth < BTTConstants.injectionDepth else { break }
                     let (newSwitch, ok) = injectIntoSwitch(switchExpr, viewName: viewName, currentDepth: currentDepth + 1)
                     if ok {
                         result[i] = item.with(\.item, .expr(ExprSyntax(newSwitch)))
@@ -201,7 +196,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
 
                 // guard — inject guard body unconditionally alongside return injection
                 } else if let guardStmt = stmt.as(GuardStmtSyntax.self) {
-                    guard currentDepth < BTTConstants.injectionDepth else { hitDepthLimit = true; break }
+                    guard currentDepth < BTTConstants.injectionDepth else { break }
                     let (newBlock, ok) = injectIntoCodeBlock(guardStmt.body, viewName: viewName, currentDepth: currentDepth + 1)
                     if ok {
                         result[i] = item.with(\.item, .stmt(StmtSyntax(guardStmt.with(\.body, newBlock))))
@@ -212,7 +207,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
                 } else if !expressionDone,
                           let exprStmt = stmt.as(ExpressionStmtSyntax.self),
                           let ifExpr = exprStmt.expression.as(IfExprSyntax.self) {
-                    guard currentDepth < BTTConstants.injectionDepth else { hitDepthLimit = true; break }
+                    guard currentDepth < BTTConstants.injectionDepth else { break }
                     let (newIf, ok) = injectIntoIf(ifExpr, viewName: viewName, currentDepth: currentDepth + 1)
                     if ok {
                         result[i] = item.with(\.item, .stmt(StmtSyntax(exprStmt.with(\.expression, ExprSyntax(newIf)))))
@@ -223,7 +218,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
                 } else if !expressionDone,
                           let exprStmt = stmt.as(ExpressionStmtSyntax.self),
                           let switchExpr = exprStmt.expression.as(SwitchExprSyntax.self) {
-                    guard currentDepth < BTTConstants.injectionDepth else { hitDepthLimit = true; break }
+                    guard currentDepth < BTTConstants.injectionDepth else { break }
                     let (newSwitch, ok) = injectIntoSwitch(switchExpr, viewName: viewName, currentDepth: currentDepth + 1)
                     if ok {
                         result[i] = item.with(\.item, .stmt(StmtSyntax(exprStmt.with(\.expression, ExprSyntax(newSwitch)))))
@@ -233,7 +228,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
                 // bare if/else — skip if expression already injected
                 } else if !expressionDone,
                           let ifExpr = stmt.as(IfExprSyntax.self) {
-                    guard currentDepth < BTTConstants.injectionDepth else { hitDepthLimit = true; break }
+                    guard currentDepth < BTTConstants.injectionDepth else { break }
                     let (newIf, ok) = injectIntoIf(ifExpr, viewName: viewName, currentDepth: currentDepth + 1)
                     if ok {
                         result[i] = item.with(\.item, .stmt(StmtSyntax(ExpressionStmtSyntax(expression: ExprSyntax(newIf)))))
@@ -243,7 +238,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
                 // bare switch — skip if expression already injected
                 } else if !expressionDone,
                           let switchExpr = stmt.as(SwitchExprSyntax.self) {
-                    guard currentDepth < BTTConstants.injectionDepth else { hitDepthLimit = true; break }
+                    guard currentDepth < BTTConstants.injectionDepth else { break }
                     let (newSwitch, ok) = injectIntoSwitch(switchExpr, viewName: viewName, currentDepth: currentDepth + 1)
                     if ok {
                         result[i] = item.with(\.item, .stmt(StmtSyntax(ExpressionStmtSyntax(expression: ExprSyntax(newSwitch)))))
@@ -255,7 +250,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
             case .decl(let decl):
                 guard !expressionDone else { continue }
                 if let ifConfig = decl.as(IfConfigDeclSyntax.self) {
-                    guard currentDepth < BTTConstants.injectionDepth else { hitDepthLimit = true; break }
+                    guard currentDepth < BTTConstants.injectionDepth else { break }
                     let (newConfig, ok) = injectIntoIfConfig(ifConfig, viewName: viewName, currentDepth: currentDepth + 1)
                     if ok {
                         result[i] = item.with(\.item, .decl(DeclSyntax(newConfig)))

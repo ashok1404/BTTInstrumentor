@@ -131,45 +131,6 @@ final class BTTProjectResolver {
         }
     }
 
-    private func localPackageFiles(for target: String, in xcodeprojPath: String) -> [String] {
-        guard let proj   = try? XcodeProj(path: Path(xcodeprojPath)),
-              let native = proj.pbxproj.nativeTargets.first(where: { $0.name == target })
-        else { return [] }
-
-        let packagePathMap  = resolvedLocalPackages(for: xcodeprojPath)
-        let dependencyNames = (native.packageProductDependencies ?? []).compactMap { $0.productName }
-        var visitedPaths    = Set<String>()
-
-        return dependencyNames
-            .compactMap { name in
-                packagePathMap[name] ?? packagePathMap.first(where: { name.hasPrefix($0.key) })?.value
-            }
-            .filter { visitedPaths.insert($0).inserted }
-            .flatMap { scanSwiftFiles(in: $0) }
-    }
-
-    private func resolvedLocalPackages(for projPath: String) -> [String: String] {
-        var packageMap = [String: String]()
-        var inSection  = false
-
-        for line in runXcodebuildList(for: projPath).components(separatedBy: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed == "Resolved source packages:"              { inSection = true; continue }
-            if trimmed.hasPrefix("Information about project")      { break }
-            guard inSection, !trimmed.isEmpty,
-                  let separator = trimmed.range(of: ": ")          else { continue }
-
-            let name = String(trimmed[trimmed.startIndex..<separator.lowerBound])
-            let path = String(trimmed[separator.upperBound...])
-            guard path.hasPrefix("/") else { continue }
-
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { continue }
-            packageMap[name] = path
-        }
-        return packageMap
-    }
-
     private func scanSwiftFiles(in root: String) -> [String] {
         var files = [String]()
         guard let enumerator = fm.enumerator(
