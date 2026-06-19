@@ -19,16 +19,25 @@ final class BTTBuildPhase {
         self.xcodeprojPath = xcodeprojPath
     }
 
+    struct PreActionResult {
+        var matchedSchemes: [String]   // scheme names that received the pre-action
+        var userOnlySchemes: [String]  // matched schemes that are user-local (xcuserdata), not shared
+        var hasSharedScheme: Bool { matchedSchemes.count > userOnlySchemes.count }
+    }
+
     @discardableResult
-    func addPreAction(for targetName: String) -> [String] {
+    func addPreAction(for targetName: String) -> PreActionResult {
         let projName = ((xcodeprojPath as NSString).lastPathComponent as NSString).deletingPathExtension
         let schemePaths = collectSchemePaths()
         BTTLog.verbose("Found \(schemePaths.count) scheme file(s): \(schemePaths.map { URL(fileURLWithPath: $0).lastPathComponent }.joined(separator: ", "))")
 
         var matchedSchemes: [String] = []
+        var userOnlySchemes: [String] = []
 
         for schemePath in schemePaths {
             let schemeName = URL(fileURLWithPath: schemePath).deletingPathExtension().lastPathComponent
+            let isUserScheme = schemePath.contains("xcuserdata")
+
             guard var content = try? String(contentsOfFile: schemePath, encoding: .utf8) else {
                 BTTLog.verbose("  \(schemeName): could not read file")
                 continue
@@ -47,6 +56,7 @@ final class BTTBuildPhase {
             guard !hasPreAction else {
                 BTTLog.verbose("  \(schemeName): already has BTT pre-action — skipping")
                 matchedSchemes.append(schemeName)
+                if isUserScheme { userOnlySchemes.append(schemeName) }
                 continue
             }
 
@@ -54,10 +64,11 @@ final class BTTBuildPhase {
             let action      = buildActionXML(blueprintID: blueprintID, targetName: targetName, projName: projName)
             content = insertAction(action, into: content)
             try? content.write(toFile: schemePath, atomically: true, encoding: .utf8)
-            BTTLog.verbose("  \(schemeName): pre-action injected for target '\(targetName)'")
+            BTTLog.verbose("  \(schemeName): pre-action injected for target '\(targetName)' (\(isUserScheme ? "user scheme" : "shared scheme"))")
             matchedSchemes.append(schemeName)
+            if isUserScheme { userOnlySchemes.append(schemeName) }
         }
-        return matchedSchemes
+        return PreActionResult(matchedSchemes: matchedSchemes, userOnlySchemes: userOnlySchemes)
     }
 
     // MARK: - Remove pre-action

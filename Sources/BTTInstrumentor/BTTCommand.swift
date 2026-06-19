@@ -75,8 +75,8 @@ final class BTTCommand {
         }
 
         // ── Inject pre-action ─────────────────────────────────────────────────
-        let buildPhase      = BTTBuildPhase(xcodeprojPath: xcodeprojPath)
-        let matchingSchemes = buildPhase.addPreAction(for: selected)
+        let buildPhase    = BTTBuildPhase(xcodeprojPath: xcodeprojPath)
+        let schemeResult  = buildPhase.addPreAction(for: selected)
         BTTLog.verbose("Created \(BTTConstants.configFileName)")
 
         let scriptResult = writer.writeInstrumentScript()
@@ -91,30 +91,28 @@ final class BTTCommand {
             exit(1)
         }
 
-        if matchingSchemes.isEmpty {
-            BTTLog.warn("No scheme found referencing target '\(selected)' — pre-action was not injected.")
-            BTTLog.warn("  ↳ instrumentation will not run automatically on build. Add the target to a scheme and re-run 'BTTInstrumentor install'.")
+        // Always save the target — instrumentation can work even without a scheme
+        // (immediate injection now, or manual `BTTInstrumentor instrument` later).
+        store.add(selected)
+        store.saveXcodeprojName(xcodeprojPath)
+
+        if schemeResult.matchedSchemes.isEmpty {
+            BTTLog.warn("No scheme found for target '\(selected)' — pre-action was not injected.")
+            BTTLog.warn("  ↳ Auto-instrumentation on every build won't work until you:")
+            BTTLog.warn("     1. Create a scheme for '\(selected)' in Xcode (Product → Scheme → New Scheme)")
+            BTTLog.warn("     2. Quit Xcode and re-run 'BTTInstrumentor install'")
+            BTTLog.success("BTTInstrumentor \(BTTConstants.version) installed for target '\(selected)' (scheme pending)")
         } else {
-            BTTLog.verbose("Pre-action present for target \(selected) in scheme(s) \(matchingSchemes.joined(separator: ", "))")
+            BTTLog.verbose("Pre-action present for target \(selected) in scheme(s) \(schemeResult.matchedSchemes.joined(separator: ", "))")
+            if !schemeResult.hasSharedScheme {
+                BTTLog.warn("Pre-action was injected into a user-local scheme only (\(schemeResult.userOnlySchemes.joined(separator: ", "))).")
+                BTTLog.warn("  ↳ User schemes are not shared with the team (typically gitignored).")
+                BTTLog.warn("  ↳ To apply to all team members: in Xcode, mark the scheme as Shared (Manage Schemes → tick Shared), then re-run 'BTTInstrumentor install'.")
+            }
+            BTTLog.success("Successfully installed BTTInstrumentor \(BTTConstants.version) to project \(projName).xcodeproj target \(selected)")
         }
 
-
-        let setupSucceeded = !matchingSchemes.isEmpty
-        if setupSucceeded {
-            store.add(selected)
-            store.saveXcodeprojName(xcodeprojPath)
-        } else {
-            store.remove(selected)
-        }
-
-        if !setupSucceeded {
-            BTTLog.warn("Install completed with warnings for project \(projName).xcodeproj target \(selected). Run 'BTTInstrumentor check' for details.")
-            return
-        }
-
-        BTTLog.success("Successfully installed BTTInstrumentor \(BTTConstants.version) to project \(projName).xcodeproj target \(selected)")
-
-        promptImmediateInstrumentation(for: selected, in: xcodeprojPath, resolver: resolver)
+        promptImmediateInstrumentation(for: selected, in: xcodeprojPath, resolver: resolver, hasScheme: !schemeResult.matchedSchemes.isEmpty)
     }
 
     // MARK: - instrument (internal — invoked by btt_instrument.sh on every Xcode build)
@@ -316,13 +314,13 @@ final class BTTCommand {
     }
 
     // MARK: - Post-install scan + prompt
-    private func promptImmediateInstrumentation(for target: String, in xcodeprojPath: String, resolver: BTTProjectResolver) {
+    private func promptImmediateInstrumentation(for target: String, in xcodeprojPath: String, resolver: BTTProjectResolver, hasScheme: Bool) {
         BTTLog.info("Scanning project...")
 
         let files = resolver.getSwiftFiles(for: target, in: xcodeprojPath)
         guard !files.isEmpty else {
             BTTLog.warn("No Swift files found for '\(target)'.")
-            printNextBuildMessage()
+            printNextBuildMessage(hasScheme: hasScheme)
             return
         }
 
@@ -347,24 +345,34 @@ final class BTTCommand {
                 var injFiles  = 0
                 var injViews  = 0
                 let start     = Date()
-                
+
                 for file in files {
                     let count = injector.inject(file: file)
                     if count > 0 { injViews += count; injFiles += 1 }
                 }
-                
+
                 let ms = Int(Date().timeIntervalSince(start) * 1000)
                 BTTLog.success("Instrumentation completed — SwiftUI files \(injFiles), SwiftUI views \(injViews), time taken \(ms) ms")
+
+                if !hasScheme {
+                    BTTLog.warn("This is a one-time injection — new or modified views won't be re-instrumented automatically.")
+                    BTTLog.warn("  ↳ Create a scheme for '\(target)' in Xcode and re-run 'BTTInstrumentor install' to enable auto-instrumentation on every build.")
+                }
             } else {
-                printNextBuildMessage()
+                printNextBuildMessage(hasScheme: hasScheme)
             }
         } else {
-            printNextBuildMessage()
+            printNextBuildMessage(hasScheme: hasScheme)
         }
     }
 
-    private func printNextBuildMessage() {
-        BTTLog.info("On next build all SwiftUI views will be instrumented automatically. For more info see \(BTTConstants.docsURL)\n")
+    private func printNextBuildMessage(hasScheme: Bool) {
+        if hasScheme {
+            BTTLog.info("On next build all SwiftUI views will be instrumented automatically. For more info see \(BTTConstants.docsURL)\n")
+        } else {
+            BTTLog.warn("Auto-instrumentation on build is not active — no scheme is set up.")
+            BTTLog.warn("  ↳ Create a scheme for your target in Xcode and re-run 'BTTInstrumentor install'.")
+        }
     }
 
     // MARK: - Private helpers
@@ -463,7 +471,7 @@ final class BTTCommand {
             let buildPhase = BTTBuildPhase(xcodeprojPath: xcodeprojPath)
             for target in resolver.getTargets(in: xcodeprojPath) {
                 let matchedSchemes = buildPhase.addPreAction(for: target)
-                if !matchedSchemes.isEmpty {
+                if !matchedSchemes.matchedSchemes.isEmpty {
                     store.add(target)
                 }
             }

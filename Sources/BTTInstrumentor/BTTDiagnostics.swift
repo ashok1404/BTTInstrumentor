@@ -143,7 +143,7 @@ final class BTTDiagnostics {
                 pass: "Pre-action in scheme: \(target)",
                 fail: "Pre-action missing for '\(target)' (quit Xcode, mandatory for proper instrumentation) — run 'BTTInstrumentor install'",
                 diagnose: schemePaths.isEmpty
-                    ? "no .xcscheme files found in xcshareddata/xcschemes or xcuserdata"
+                    ? "no .xcscheme files found — create a scheme for '\(target)' in Xcode (Product → Scheme → New Scheme), then re-run 'BTTInstrumentor install'"
                     : "checked scheme(s): \(schemePaths.map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent }.joined(separator: ", ")) — none reference target '\(target)' with pre-action '\(BTTConstants.preActionTitle)'"
             )
         }
