@@ -150,7 +150,7 @@ final class BTTCommand {
         var injectedViews = 0
         let start         = Date()
 
-        let objectFileDir = ProcessInfo.processInfo.environment["OBJECT_FILE_DIR"]
+        let objectFileDir = resolveObjectFileDir()
         for file in files {
             guard !injector.isIgnored(file: file) else { continue }
 
@@ -158,7 +158,7 @@ final class BTTCommand {
             let isInjected = injector.isInjected(file: file)
 
             if isModified && isInjected {
-                // File changed and was previously injected — strip and re-inject
+                // File changed since last build — strip and re-inject
                 injector.revert(file: file)
             } else if !isModified && isInjected {
                 // File unchanged and already injected — nothing to do
@@ -483,18 +483,44 @@ final class BTTCommand {
         try? FileManager.default.removeItem(atPath: bttDir)
     }
 
+    /// OBJECT_FILE_DIR_normal points to the arch-specific .o directory (.../Objects-normal).
+    /// Falls back to OBJECT_FILE_DIR if the _normal variant is not set.
+    private func resolveObjectFileDir() -> String? {
+        let env = ProcessInfo.processInfo.environment
+        return env["OBJECT_FILE_DIR_normal"] ?? env["OBJECT_FILE_DIR"]
+    }
+
     /// Returns true if the Swift file is newer than its compiled .o counterpart.
-    /// OBJECT_FILE_DIR is always set by Xcode when instrument runs via pre-action.
-    /// Falls back to true when .o doesn't exist yet (clean/first build).
+    /// Falls back to true (inject all) when the .o cannot be found — e.g. clean build.
     private func isFileModifiedSinceLastCompile(_ swiftFile: String, objectFileDir: String?) -> Bool {
-        guard let objDir = objectFileDir else { return true }
-        let baseName = ((swiftFile as NSString).lastPathComponent as NSString).deletingPathExtension
-        let objFile  = (objDir as NSString).appendingPathComponent("\(baseName).o")
+        guard let objDir  = objectFileDir else { return true }
         let fm       = FileManager.default
-        guard fm.fileExists(atPath: objFile),
-              let swiftMtime = (try? fm.attributesOfItem(atPath: swiftFile))?[.modificationDate] as? Date,
+        let baseName = ((swiftFile as NSString).lastPathComponent as NSString).deletingPathExtension
+        let fileName = "\(baseName).o"
+
+        // Try CURRENT_ARCH subdir first (standard layout), then scan one level as fallback
+        let arch = ProcessInfo.processInfo.environment["CURRENT_ARCH"] ?? ""
+        let candidates: [String] = [
+            (objDir as NSString).appendingPathComponent(fileName),
+            arch.isEmpty ? nil : ((objDir as NSString).appendingPathComponent(arch) as NSString).appendingPathComponent(fileName)
+        ].compactMap { $0 }
+
+        let objFile: String
+        if let direct = candidates.first(where: { fm.fileExists(atPath: $0) }) {
+            objFile = direct
+        } else if let found = (try? fm.contentsOfDirectory(atPath: objDir))?.lazy.compactMap({ entry -> String? in
+            let c = ((objDir as NSString).appendingPathComponent(entry) as NSString).appendingPathComponent(fileName)
+            return fm.fileExists(atPath: c) ? c : nil
+        }).first {
+            objFile = found
+        } else {
+            return true  // .o not found — first build or clean, inject all
+        }
+
+        guard let swiftMtime = (try? fm.attributesOfItem(atPath: swiftFile))?[.modificationDate] as? Date,
               let objMtime   = (try? fm.attributesOfItem(atPath: objFile))?[.modificationDate] as? Date
         else { return true }
+
         return swiftMtime > objMtime
     }
 }

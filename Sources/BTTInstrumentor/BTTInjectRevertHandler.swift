@@ -106,7 +106,9 @@ final class BTTInjectRevertHandler {
 
         do {
             try result.write(toFile: path, atomically: true, encoding: .utf8)
-            BTTLog.verbose("  ↩ \(fileName) \(rewriter.revertedViews.joined(separator: ", ")) reverted instrumentation")
+            if !BTTLog.nonInteractive {
+                BTTLog.verbose("  ↩ \(fileName) \(rewriter.revertedViews.joined(separator: ", ")) reverted instrumentation")
+            }
         } catch {
             BTTLog.verbose("  ✗ \(fileName) failed to revert: \(error.localizedDescription)")
             return 0

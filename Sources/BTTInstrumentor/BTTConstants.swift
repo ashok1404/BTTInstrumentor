@@ -10,7 +10,7 @@ import Foundation
 enum BTTConstants {
 
     // MARK: - BTTInstrumentor version
-    static let version = "1.0.1"
+    static let version = "1.0.0"
 
     // MARK: - SDK
     static let minBTTVersion        = "3.15.13"
