@@ -16,6 +16,17 @@ final class BTTInjectRewriter: SyntaxRewriter {
     var filePath       = ""  // set by BTTInjectRevertHandler before visiting
     var hitDepthLimit  = false
 
+    // Known Void-returning functions that are valid inside a ViewBuilder body but produce
+    // no View. Lowercase custom view wrappers (e.g. myView()) are intentionally NOT listed
+    // so they remain injectable.
+    static let knownVoidFunctions: Set<String> = [
+        "print", "debugPrint", "NSLog",
+        "os_log", "os_signpost",
+        "assert", "assertionFailure",
+        "precondition", "preconditionFailure",
+        "fatalError", "exit",
+    ]
+
     // MARK: - Import
 
     override func visit(_ node: SourceFileSyntax) -> SourceFileSyntax {
@@ -72,12 +83,8 @@ final class BTTInjectRewriter: SyntaxRewriter {
 
         hitDepthLimit = false
         guard let newNode = injectTrackScreen(into: node, viewName: name) else {
-            return DeclSyntax(node)
-        }
-
-        if hitDepthLimit {
             let fileName = filePath.isEmpty ? name : URL(fileURLWithPath: filePath).lastPathComponent
-            BTTLog.warn("  \(fileName): \(name) skipped — body too complex, instrument manually")
+            BTTLog.warn("\(fileName): \(name) body is too complex — instrument manually")
             skippedViews.append(name)
             return DeclSyntax(node)
         }
@@ -88,6 +95,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
 
     // MARK: - Inject into body
     private func injectTrackScreen(into node: StructDeclSyntax, viewName: String) -> StructDeclSyntax? {
+        var didInject = false
         let newMembers = MemberBlockItemListSyntax(node.memberBlock.members.map { member in
             guard let varDecl = member.decl.as(VariableDeclSyntax.self),
                   let binding = varDecl.bindings.first(where: { $0.pattern.trimmedDescription == "body" }),
@@ -105,15 +113,9 @@ final class BTTInjectRewriter: SyntaxRewriter {
                 stmts = Array(body.statements)
             }
 
-            // Try to inject at configured depth
             let (newStmts, injected) = injectIntoStmts(stmts, viewName: viewName, currentDepth: 1)
-
-            if !injected {
-                let fileName = filePath.isEmpty ? viewName : URL(fileURLWithPath: filePath).lastPathComponent
-                BTTLog.warn("\(fileName): \(viewName) body is too complex — instrument manually")
-                skippedViews.append(viewName)
-                return member
-            }
+            guard injected else { return member }
+            didInject = true
 
             let newAccessorBlock: AccessorBlockSyntax
             switch accessorBlock.accessors {
@@ -135,6 +137,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
             })
             return member.with(\.decl, DeclSyntax(varDecl.with(\.bindings, newBindings)))
         })
+        guard didInject else { return nil }
         return node.with(\.memberBlock, node.memberBlock.with(\.members, newMembers))
     }
 
@@ -153,14 +156,18 @@ final class BTTInjectRewriter: SyntaxRewriter {
     ) -> ([CodeBlockItemSyntax], Bool) {
         var result = stmts
         var injected = false
+        // Tracks whether a top-level expression stmt was already injected so earlier
+        // side-effect calls (Void) are skipped. Return stmts and guard bodies are always
+        // processed regardless — every return path needs tracking.
+        var expressionDone = false
 
         for (i, item) in stmts.enumerated().reversed() {
-            guard !injected else { break }
 
             switch item.item {
 
             // MARK: Expression
             case .expr(let expr):
+                guard !expressionDone else { continue }
 
                 // if/else as expression — control flow, costs 1 depth
                 if let ifExpr = expr.as(IfExprSyntax.self) {
@@ -168,7 +175,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
                     let (newIf, ok) = injectIntoIf(ifExpr, viewName: viewName, currentDepth: currentDepth + 1)
                     if ok {
                         result[i] = item.with(\.item, .expr(ExprSyntax(newIf)))
-                        injected = true
+                        injected = true; expressionDone = true
                     }
                     continue
                 }
@@ -179,7 +186,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
                     let (newSwitch, ok) = injectIntoSwitch(switchExpr, viewName: viewName, currentDepth: currentDepth + 1)
                     if ok {
                         result[i] = item.with(\.item, .expr(ExprSyntax(newSwitch)))
-                        injected = true
+                        injected = true; expressionDone = true
                     }
                     continue
                 }
@@ -187,20 +194,22 @@ final class BTTInjectRewriter: SyntaxRewriter {
                 // Direct view expression — inject, no depth cost
                 if let newExpr = appendTrackScreen(to: expr, viewName: viewName) {
                     result[i] = item.with(\.item, .expr(newExpr))
-                    injected = true
+                    injected = true; expressionDone = true
                 }
 
             // MARK: Statement
             case .stmt(let stmt):
 
-                // return — direct view, no depth cost
+                // return — inject ALL returns unconditionally; every return path needs tracking.
+                // Also set expressionDone so any preceding expression stmts (e.g. print calls)
+                // are recognised as side effects and skipped.
                 if let ret = stmt.as(ReturnStmtSyntax.self),
                    let expr = ret.expression,
                    let newExpr = appendTrackScreen(to: expr, viewName: viewName) {
                     result[i] = item.with(\.item, .stmt(StmtSyntax(ret.with(\.expression, newExpr))))
-                    injected = true
+                    injected = true; expressionDone = true
 
-                // guard — control flow, costs 1 depth
+                // guard — inject guard body unconditionally alongside return injection
                 } else if let guardStmt = stmt.as(GuardStmtSyntax.self) {
                     guard currentDepth < BTTConstants.injectionDepth else { hitDepthLimit = true; break }
                     let (newBlock, ok) = injectIntoCodeBlock(guardStmt.body, viewName: viewName, currentDepth: currentDepth + 1)
@@ -209,53 +218,58 @@ final class BTTInjectRewriter: SyntaxRewriter {
                         injected = true
                     }
 
-                // if/else wrapped in ExpressionStmtSyntax — control flow, costs 1 depth
-                } else if let exprStmt = stmt.as(ExpressionStmtSyntax.self),
+                // if/else wrapped in ExpressionStmtSyntax — skip if expression already injected
+                } else if !expressionDone,
+                          let exprStmt = stmt.as(ExpressionStmtSyntax.self),
                           let ifExpr = exprStmt.expression.as(IfExprSyntax.self) {
                     guard currentDepth < BTTConstants.injectionDepth else { hitDepthLimit = true; break }
                     let (newIf, ok) = injectIntoIf(ifExpr, viewName: viewName, currentDepth: currentDepth + 1)
                     if ok {
                         result[i] = item.with(\.item, .stmt(StmtSyntax(exprStmt.with(\.expression, ExprSyntax(newIf)))))
-                        injected = true
+                        injected = true; expressionDone = true
                     }
 
-                // switch wrapped in ExpressionStmtSyntax — control flow, costs 1 depth
-                } else if let exprStmt = stmt.as(ExpressionStmtSyntax.self),
+                // switch wrapped in ExpressionStmtSyntax — skip if expression already injected
+                } else if !expressionDone,
+                          let exprStmt = stmt.as(ExpressionStmtSyntax.self),
                           let switchExpr = exprStmt.expression.as(SwitchExprSyntax.self) {
                     guard currentDepth < BTTConstants.injectionDepth else { hitDepthLimit = true; break }
                     let (newSwitch, ok) = injectIntoSwitch(switchExpr, viewName: viewName, currentDepth: currentDepth + 1)
                     if ok {
                         result[i] = item.with(\.item, .stmt(StmtSyntax(exprStmt.with(\.expression, ExprSyntax(newSwitch)))))
-                        injected = true
+                        injected = true; expressionDone = true
                     }
 
-                // bare if/else — control flow, costs 1 depth
-                } else if let ifExpr = stmt.as(IfExprSyntax.self) {
+                // bare if/else — skip if expression already injected
+                } else if !expressionDone,
+                          let ifExpr = stmt.as(IfExprSyntax.self) {
                     guard currentDepth < BTTConstants.injectionDepth else { hitDepthLimit = true; break }
                     let (newIf, ok) = injectIntoIf(ifExpr, viewName: viewName, currentDepth: currentDepth + 1)
                     if ok {
                         result[i] = item.with(\.item, .stmt(StmtSyntax(ExpressionStmtSyntax(expression: ExprSyntax(newIf)))))
-                        injected = true
+                        injected = true; expressionDone = true
                     }
 
-                // bare switch — control flow, costs 1 depth
-                } else if let switchExpr = stmt.as(SwitchExprSyntax.self) {
+                // bare switch — skip if expression already injected
+                } else if !expressionDone,
+                          let switchExpr = stmt.as(SwitchExprSyntax.self) {
                     guard currentDepth < BTTConstants.injectionDepth else { hitDepthLimit = true; break }
                     let (newSwitch, ok) = injectIntoSwitch(switchExpr, viewName: viewName, currentDepth: currentDepth + 1)
                     if ok {
                         result[i] = item.with(\.item, .stmt(StmtSyntax(ExpressionStmtSyntax(expression: ExprSyntax(newSwitch)))))
-                        injected = true
+                        injected = true; expressionDone = true
                     }
                 }
 
             // MARK: Declaration — #if DEBUG
             case .decl(let decl):
+                guard !expressionDone else { continue }
                 if let ifConfig = decl.as(IfConfigDeclSyntax.self) {
                     guard currentDepth < BTTConstants.injectionDepth else { hitDepthLimit = true; break }
                     let (newConfig, ok) = injectIntoIfConfig(ifConfig, viewName: viewName, currentDepth: currentDepth + 1)
                     if ok {
                         result[i] = item.with(\.item, .decl(DeclSyntax(newConfig)))
-                        injected = true
+                        injected = true; expressionDone = true
                     }
                 }
 
@@ -364,6 +378,42 @@ final class BTTInjectRewriter: SyntaxRewriter {
             return ExprSyntax(call.with(\.trailingClosure, newClosure))
         }
 
+        // SequenceExprSyntax — ternary whose condition uses an operator (e.g. `state == 0 ? ... : ...`).
+        // SwiftSyntax represents these as a flat sequence with UnresolvedTernaryExprSyntax elements
+        // for each `? then :` branch. Inject into every then-expression and the final else element.
+        if let seqExpr = expr.as(SequenceExprSyntax.self) {
+            var elements = Array(seqExpr.elements)
+            var changed = false
+            for (i, element) in elements.enumerated() {
+                if let ut = element.as(UnresolvedTernaryExprSyntax.self),
+                   let newThen = appendTrackScreen(to: ut.thenExpression, viewName: viewName) {
+                    elements[i] = ExprSyntax(ut.with(\.thenExpression, newThen))
+                    changed = true
+                }
+            }
+            // Last element is the final else branch
+            let lastIdx = elements.count - 1
+            if let newLast = appendTrackScreen(to: elements[lastIdx], viewName: viewName) {
+                elements[lastIdx] = newLast
+                changed = true
+            }
+            guard changed else { return nil }
+            return ExprSyntax(seqExpr.with(\.elements, ExprListSyntax(elements)))
+        }
+
+        // AnyView(...) — inject inside the argument to preserve AnyView as the return type.
+        // Injecting outside would change the return type to an opaque modifier type,
+        // breaking bodies that mix AnyView returns across branches (e.g. guard/else).
+        if let call = expr.as(FunctionCallExprSyntax.self),
+           let ref = call.calledExpression.as(DeclReferenceExprSyntax.self),
+           ref.baseName.text == "AnyView",
+           let firstArg = call.arguments.first {
+            guard let newArgExpr = appendTrackScreen(to: firstArg.expression, viewName: viewName) else { return nil }
+            let newArg = firstArg.with(\.expression, newArgExpr)
+            let newArgs = LabeledExprListSyntax([newArg])
+            return ExprSyntax(call.with(\.arguments, newArgs))
+        }
+
         guard isViewExpression(expr) else { return nil }
 
         let indent = lastModifierIndent(of: expr) ?? extractIndent(from: expr.leadingTrivia)
@@ -405,10 +455,6 @@ final class BTTInjectRewriter: SyntaxRewriter {
 
     // MARK: - isViewExpression
     private func isViewExpression(_ expr: ExprSyntax) -> Bool {
-        if let call = expr.as(FunctionCallExprSyntax.self),
-           let ref = call.calledExpression.as(DeclReferenceExprSyntax.self),
-           ref.baseName.text == "EmptyView" { return false }
-
         if let ref = expr.as(DeclReferenceExprSyntax.self),
            ref.baseName.text.hasPrefix("$") { return false }
 
@@ -421,6 +467,12 @@ final class BTTInjectRewriter: SyntaxRewriter {
 
         if let tryExpr = expr.as(TryExprSyntax.self),
            tryExpr.questionOrExclamationMark?.tokenKind == .postfixQuestionMark { return false }
+
+        // Block known Void-returning functions that are legal in a ViewBuilder body
+        // but produce no View. Custom lowercase view wrappers are still allowed through.
+        if let call = expr.as(FunctionCallExprSyntax.self),
+           let ref = call.calledExpression.as(DeclReferenceExprSyntax.self),
+           BTTInjectRewriter.knownVoidFunctions.contains(ref.baseName.text) { return false }
 
         if expr.is(FunctionCallExprSyntax.self)   { return true }
         if expr.is(MemberAccessExprSyntax.self)   { return true }

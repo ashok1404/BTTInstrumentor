@@ -166,10 +166,42 @@ final class BTTRevertRewriter: SyntaxRewriter {
             )
         }
 
-        // Any FunctionCallExpr with trailing closure (VStack, HStack, withAnimation etc)
-        // — strip .bttTrackScreen from inside the closure recursively
+        // SequenceExprSyntax — ternary with complex condition (e.g. state == 0 ? ... : ...)
+        // Strip from each UnresolvedTernaryExprSyntax.thenExpression and the final else element.
+        if let seqExpr = expr.as(SequenceExprSyntax.self) {
+            var elements = Array(seqExpr.elements)
+            var changed = false
+            for (i, element) in elements.enumerated() {
+                if let ut = element.as(UnresolvedTernaryExprSyntax.self) {
+                    let newThen = stripTrackScreen(from: ut.thenExpression)
+                    if newThen.description != ut.thenExpression.description {
+                        elements[i] = ExprSyntax(ut.with(\.thenExpression, newThen))
+                        changed = true
+                    }
+                }
+            }
+            let lastIdx = elements.count - 1
+            let newLast = stripTrackScreen(from: elements[lastIdx])
+            if newLast.description != elements[lastIdx].description {
+                elements[lastIdx] = newLast
+                changed = true
+            }
+            if changed {
+                return ExprSyntax(seqExpr.with(\.elements, ExprListSyntax(elements)))
+            }
+        }
+
+        // Any FunctionCallExpr — strip .bttTrackScreen from trailing closures and labeled args
         if let call = expr.as(FunctionCallExprSyntax.self) {
             var newCall = call
+
+            // Strip from labeled arguments (e.g. AnyView(Text(...).bttTrackScreen(...)))
+            if !call.arguments.isEmpty {
+                let newArgs = LabeledExprListSyntax(call.arguments.map { arg in
+                    arg.with(\.expression, stripTrackScreen(from: arg.expression))
+                })
+                newCall = newCall.with(\.arguments, newArgs)
+            }
 
             // Strip from trailing closure
             if let closure = call.trailingClosure {
@@ -188,25 +220,17 @@ final class BTTRevertRewriter: SyntaxRewriter {
                 newCall = newCall.with(\.additionalTrailingClosures, MultipleTrailingClosureElementListSyntax(newClosures))
             }
 
-            // Now check if this call itself is .bttTrackScreen — strip it
+            // Check if this call itself is .bttTrackScreen — strip it
             if let member = newCall.calledExpression.as(MemberAccessExprSyntax.self),
                member.declName.baseName.text == BTTConstants.trackModifier,
                let base = member.base {
                 return base.with(\.trailingTrivia, expr.trailingTrivia)
             }
 
-            // Return with cleaned closures (even if not .bttTrackScreen itself)
+            // Return with cleaned args/closures if anything changed
             if newCall.description != call.description {
                 return ExprSyntax(newCall)
             }
-        }
-
-        // Direct .bttTrackScreen() call — strip it
-        if let call = expr.as(FunctionCallExprSyntax.self),
-           let member = call.calledExpression.as(MemberAccessExprSyntax.self),
-           member.declName.baseName.text == BTTConstants.trackModifier,
-           let base = member.base {
-            return base.with(\.trailingTrivia, expr.trailingTrivia)
         }
 
         return expr
