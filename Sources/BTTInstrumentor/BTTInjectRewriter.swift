@@ -11,6 +11,7 @@ import Foundation
 
 final class BTTInjectRewriter: SyntaxRewriter {
     var injectedViews = [String]()
+    var complexViews  = [String]()  // views whose body was too complex to inject
     var filePath      = ""  // set by BTTInjectRevertHandler before visiting
 
     // MARK: - Import
@@ -69,6 +70,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
         guard let newNode = injectTrackScreen(into: node, viewName: name) else {
             let fileName = filePath.isEmpty ? name : URL(fileURLWithPath: filePath).lastPathComponent
             BTTLog.warn("\(fileName): \(name) body is too complex — instrument manually")
+            complexViews.append(name)
             return DeclSyntax(node)
         }
 

@@ -13,9 +13,12 @@ import SwiftDiagnostics
 import SwiftParserDiagnostics
 
 final class BTTInjectRevertHandler {
+    private(set) var lastHadComplexViews = false
+
     // MARK: - Inject
     @discardableResult
     func inject(file path: String) -> Int {
+        lastHadComplexViews = false
         let fileName = URL(fileURLWithPath: path).lastPathComponent
 
         guard let source = try? String(contentsOfFile: path, encoding: .utf8) else {
@@ -37,6 +40,7 @@ final class BTTInjectRevertHandler {
             BTTLog.verbose("  ✗ Rewriter returned unexpected node type")
             return 0
         }
+        lastHadComplexViews = !rewriter.complexViews.isEmpty
         let result = newTree.description
         guard rewriter.injectedViews.count > 0 || result != source else { return 0 }
         guard result != source else { return 0 } // no-op if injectedViews>0 but text unchanged (shouldn't happen, but stay safe)

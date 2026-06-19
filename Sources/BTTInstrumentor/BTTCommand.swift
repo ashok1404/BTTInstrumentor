@@ -7,6 +7,7 @@
 
 #if os(macOS)
 import Foundation
+import Darwin
 import PathKit
 import XcodeProj
 
@@ -150,23 +151,23 @@ final class BTTCommand {
         var injectedViews = 0
         let start         = Date()
 
-        let objectFileDir = resolveObjectFileDir()
         for file in files {
             guard !injector.isIgnored(file: file) else { continue }
 
-            let isModified = isFileModifiedSinceLastCompile(file, objectFileDir: objectFileDir)
+            let isModified = isFileModifiedSinceLastInjection(file)
             let isInjected = injector.isInjected(file: file)
 
             if isModified && isInjected {
-                // File changed since last build — strip and re-inject
                 injector.revert(file: file)
+                clearInjectionMtime(for: file)
             } else if !isModified && isInjected {
-                // File unchanged and already injected — nothing to do
                 continue
             }
-            // Remaining cases: modified+not-injected, or not-modified+not-injected → inject
             let count = injector.inject(file: file)
             if count > 0 {
+                if !injector.lastHadComplexViews {
+                    setInjectionMtime(for: file)
+                }
                 injectedViews += count
                 injectedFiles += 1
             }
@@ -483,45 +484,48 @@ final class BTTCommand {
         try? FileManager.default.removeItem(atPath: bttDir)
     }
 
-    /// OBJECT_FILE_DIR_normal points to the arch-specific .o directory (.../Objects-normal).
-    /// Falls back to OBJECT_FILE_DIR if the _normal variant is not set.
-    private func resolveObjectFileDir() -> String? {
-        let env = ProcessInfo.processInfo.environment
-        return env["OBJECT_FILE_DIR_normal"] ?? env["OBJECT_FILE_DIR"]
+    /// Returns the Objects-normal directory where Xcode stores .o files from the previous build.
+    /// Pre-actions run before compilation so OBJECT_FILE_DIR_normal and CURRENT_ARCH are not yet set.
+    /// We derive Objects-normal from OBJECT_FILE_DIR by replacing the trailing "Objects" component.
+    // MARK: - Xattr-based injection tracking
+
+    private static let bttXattrKey = "com.bluetriangle.btt-injected"
+
+    /// True if the file's mtime differs from what was recorded at last injection.
+    /// Falls back to true (inject) when no xattr exists — e.g. first build or clean.
+    private func isFileModifiedSinceLastInjection(_ path: String) -> Bool {
+        guard let currentMtime = swiftMtime(path) else { return true }
+        guard let stored = readXattr(path: path, key: Self.bttXattrKey),
+              let storedMtime = Int(stored)
+        else { return true }
+        return Int(currentMtime.timeIntervalSince1970) != storedMtime
     }
 
-    /// Returns true if the Swift file is newer than its compiled .o counterpart.
-    /// Falls back to true (inject all) when the .o cannot be found — e.g. clean build.
-    private func isFileModifiedSinceLastCompile(_ swiftFile: String, objectFileDir: String?) -> Bool {
-        guard let objDir  = objectFileDir else { return true }
-        let fm       = FileManager.default
-        let baseName = ((swiftFile as NSString).lastPathComponent as NSString).deletingPathExtension
-        let fileName = "\(baseName).o"
+    private func setInjectionMtime(for path: String) {
+        guard let mtime = swiftMtime(path) else { return }
+        writeXattr(path: path, key: Self.bttXattrKey, value: "\(Int(mtime.timeIntervalSince1970))")
+    }
 
-        // Try CURRENT_ARCH subdir first (standard layout), then scan one level as fallback
-        let arch = ProcessInfo.processInfo.environment["CURRENT_ARCH"] ?? ""
-        let candidates: [String] = [
-            (objDir as NSString).appendingPathComponent(fileName),
-            arch.isEmpty ? nil : ((objDir as NSString).appendingPathComponent(arch) as NSString).appendingPathComponent(fileName)
-        ].compactMap { $0 }
+    private func clearInjectionMtime(for path: String) {
+        removexattr(path, Self.bttXattrKey, 0)
+    }
 
-        let objFile: String
-        if let direct = candidates.first(where: { fm.fileExists(atPath: $0) }) {
-            objFile = direct
-        } else if let found = (try? fm.contentsOfDirectory(atPath: objDir))?.lazy.compactMap({ entry -> String? in
-            let c = ((objDir as NSString).appendingPathComponent(entry) as NSString).appendingPathComponent(fileName)
-            return fm.fileExists(atPath: c) ? c : nil
-        }).first {
-            objFile = found
-        } else {
-            return true  // .o not found — first build or clean, inject all
+    private func swiftMtime(_ path: String) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+    }
+
+    private func readXattr(path: String, key: String) -> String? {
+        let len = getxattr(path, key, nil, 0, 0, 0)
+        guard len > 0 else { return nil }
+        var buf = [UInt8](repeating: 0, count: len)
+        guard getxattr(path, key, &buf, len, 0, 0) == len else { return nil }
+        return String(bytes: buf, encoding: .utf8)
+    }
+
+    private func writeXattr(path: String, key: String, value: String) {
+        value.withCString { ptr in
+            _ = setxattr(path, key, ptr, strlen(ptr), 0, 0)
         }
-
-        guard let swiftMtime = (try? fm.attributesOfItem(atPath: swiftFile))?[.modificationDate] as? Date,
-              let objMtime   = (try? fm.attributesOfItem(atPath: objFile))?[.modificationDate] as? Date
-        else { return true }
-
-        return swiftMtime > objMtime
     }
 }
 
