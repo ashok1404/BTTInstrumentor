@@ -15,6 +15,7 @@ final class BTTRevertRewriter: SyntaxRewriter {
     override func visit(_ node: StructDeclSyntax) -> DeclSyntax {
         let name = node.name.text
         guard bodyHasTrackScreen(node) else { return DeclSyntax(node) }
+        guard !node.leadingTrivia.hasIgnore else { return DeclSyntax(node) }
 
         let newMembers = MemberBlockItemListSyntax(node.memberBlock.members.map { member in
             guard let varDecl = member.decl.as(VariableDeclSyntax.self),

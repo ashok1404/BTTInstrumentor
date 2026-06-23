@@ -58,6 +58,7 @@ final class BTTInjectRewriter: SyntaxRewriter {
         let name = node.name.text
 
         guard conformsToView(node) else { return DeclSyntax(node) }
+        guard !node.leadingTrivia.hasIgnore else { return DeclSyntax(node) }
         guard let bodyVar = bodyMember(in: node) else { return DeclSyntax(node) }
         guard bodyReturnsOpaqueView(bodyVar) else { return DeclSyntax(node) }
 
@@ -528,5 +529,14 @@ final class BTTInjectRewriter: SyntaxRewriter {
         else { return true }
         let typeText = typeAnnotation.type.trimmedDescription
         return typeText == "some View" || typeText == "any View"
+    }
+}
+
+extension Trivia {
+    var hasIgnore: Bool {
+        contains {
+            guard case .lineComment(let t) = $0 else { return false }
+            return t.range(of: BTTConstants.ignorePattern, options: .regularExpression) != nil
+        }
     }
 }

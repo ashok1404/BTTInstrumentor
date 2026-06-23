@@ -30,7 +30,9 @@ enum BTTConstants {
     // MARK: - Source annotation
     static let trackModifier    = "bttTrack"
     static let importModule     = "BlueTriangle"
+    
     static let ignoreComment    = "btt:ignore"
+    static let ignorePattern    = #"//\s*btt\s*:\s*ignore"#
 
     // MARK: - Scheme pre-action
     static let preActionTitle   = "BTTInstrumentation"

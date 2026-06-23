@@ -129,7 +129,15 @@ final class BTTInjectRevertHandler {
 
     func isIgnored(file path: String) -> Bool {
         guard let source = try? String(contentsOfFile: path, encoding: .utf8) else { return false }
-        return source.contains("//\(BTTConstants.ignoreComment)")
+        let lines = source.components(separatedBy: .newlines)
+        for (i, line) in lines.enumerated() {
+            guard line.trimmingCharacters(in: .whitespaces)
+                    .range(of: BTTConstants.ignorePattern, options: .regularExpression) != nil else { continue }
+            let nextNonEmpty = lines[(i + 1)...].first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+            if nextNonEmpty?.trimmingCharacters(in: .whitespaces).hasPrefix("struct ") == true { continue }
+            return true
+        }
+        return false
     }
 
     // MARK: - Dry-run count (no file writes)
