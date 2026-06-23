@@ -16,6 +16,7 @@ jobs:
 
       - name: Build universal binary
         run: |
+          cd BTTInstrumentor
           swift build -c release --product BTTInstrumentor \
             --arch arm64 --arch x86_64
 
