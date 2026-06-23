@@ -56,6 +56,12 @@ final class BTTRevertRewriter: SyntaxRewriter {
         })
 
         let modified = node.with(\.memberBlock, node.memberBlock.with(\.members, newMembers))
+
+        // If auto-inject can't handle this struct after revert, the .bttTrackScreen() is manual — preserve it
+        let testInjector = BTTInjectRewriter()
+        _ = testInjector.visit(modified)
+        guard !testInjector.injectedViews.isEmpty else { return DeclSyntax(node) }
+
         revertedViews.insert(name)
         return DeclSyntax(modified)
     }
