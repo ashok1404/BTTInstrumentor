@@ -16,14 +16,15 @@ jobs:
 
       - name: Build universal binary
         run: |
+          cd BTTInstrumentor
           swift build -c release --product BTTInstrumentor --triple arm64-apple-macosx
           swift build -c release --product BTTInstrumentor --triple x86_64-apple-macosx
-          lipo -create -output BTTInstrumentor \
+          lipo -create -output ../BTTInstrumentor \
             .build/arm64-apple-macosx/release/BTTInstrumentor \
             .build/x86_64-apple-macosx/release/BTTInstrumentor
-          strip -rSTX BTTInstrumentor
+          strip -rSTX ../BTTInstrumentor
 
       - name: Upload
         uses: softprops/action-gh-release@v1
         with:
-          files: BTTInstrumentor
+          files: BTTInstrumentor/BTTInstrumentor
