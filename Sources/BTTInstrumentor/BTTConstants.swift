@@ -28,7 +28,7 @@ enum BTTConstants {
     static let binaryName       = "BTTInstrumentor"
 
     // MARK: - Source annotation
-    static let trackModifier    = "bttTrackScreen"
+    static let trackModifier    = "bttTrack"
     static let importModule     = "BlueTriangle"
     static let ignoreComment    = "btt:ignore"
 
