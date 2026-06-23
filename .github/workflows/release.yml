@@ -25,6 +25,10 @@ jobs:
             .build/x86_64-apple-macosx/release/BTTInstrumentor
           strip -rSTX ../release/BTTInstrumentor
 
+      - name: Sign binary
+        run: |
+          codesign --sign - --force --options runtime release/BTTInstrumentor
+
       - name: Upload
         uses: softprops/action-gh-release@v1
         with:
