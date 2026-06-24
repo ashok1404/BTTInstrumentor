@@ -106,7 +106,9 @@ final class BTTScriptWriter {
             return .failed(reason: "Could not locate running BTTInstrumentor binary (tried: \(src))")
         }
 
-        if fm.fileExists(atPath: dest) {
+        let destURL = URL(fileURLWithPath: dest)
+        let itemExists = (try? destURL.checkResourceIsReachable()) ?? false
+        if itemExists {
             BTTLog.verbose("Binary already present — skipping copy.")
             return .unchanged
         }
@@ -133,7 +135,7 @@ final class BTTScriptWriter {
 
     private func performCopy(src: String, dest: String) -> BTTWriteResult {
         do {
-            if fm.fileExists(atPath: dest) { try fm.removeItem(atPath: dest) }
+            try? fm.removeItem(atPath: dest)
             try fm.copyItem(atPath: src, toPath: dest)
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest)
             BTTLog.verbose("Binary copied: \(src) → \(dest)")
