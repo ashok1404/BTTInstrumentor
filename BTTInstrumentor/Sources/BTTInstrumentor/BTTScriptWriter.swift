@@ -147,7 +147,10 @@ final class BTTScriptWriter {
 
     private func resolveSourceBinaryPath() -> String {
         let arg0 = CommandLine.arguments[0]
-        if arg0.hasPrefix("/"), fm.fileExists(atPath: arg0) { return arg0 }
+        if arg0.hasPrefix("/") {
+            let resolved = URL(fileURLWithPath: arg0).resolvingSymlinksInPath().path
+            if fm.fileExists(atPath: resolved) { return resolved }
+        }
 
         let task = Process()
         task.launchPath     = "/usr/bin/which"
@@ -160,7 +163,9 @@ final class BTTScriptWriter {
 
         let found = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return found.isEmpty ? arg0 : found
+        if found.isEmpty { return arg0 }
+        let resolved = URL(fileURLWithPath: found).resolvingSymlinksInPath().path
+        return fm.fileExists(atPath: resolved) ? resolved : found
     }
 }
 
