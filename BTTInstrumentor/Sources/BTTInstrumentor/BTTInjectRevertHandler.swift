@@ -122,6 +122,12 @@ final class BTTInjectRevertHandler {
     }
     
     // MARK: - State check
+    func hasParseErrors(file path: String) -> Bool {
+        guard let source = try? String(contentsOfFile: path, encoding: .utf8) else { return false }
+        let tree = Parser.parse(source: source)
+        return !ParseDiagnosticsGenerator.diagnostics(for: tree).isEmpty
+    }
+
     func isInjected(file path: String) -> Bool {
         guard let source = try? String(contentsOfFile: path, encoding: .utf8) else { return false }
         return source.contains(".\(BTTConstants.trackModifier)(")

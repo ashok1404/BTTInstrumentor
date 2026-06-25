@@ -149,7 +149,14 @@ final class BTTInjectRewriter: SyntaxRewriter {
         // processed regardless — every return path needs tracking.
         var expressionDone = false
 
+        // Statements after an explicit `return` are dead code — skip them.
+        let firstReturnIdx = stmts.firstIndex(where: {
+            if case .stmt(let s) = $0.item { return s.is(ReturnStmtSyntax.self) }
+            return false
+        })
+
         for (i, item) in stmts.enumerated().reversed() {
+            if let ri = firstReturnIdx, i > ri { continue }
 
             switch item.item {
 

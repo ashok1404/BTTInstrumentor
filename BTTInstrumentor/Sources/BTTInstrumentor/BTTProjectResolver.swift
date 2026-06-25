@@ -59,11 +59,12 @@ final class BTTProjectResolver {
                 return selected
             }
 
-            BTTLog.info("\nMultiple .xcodeproj files found. Which one do you want to use?\n")
+            BTTLog.prompt("\nMultiple .xcodeproj files found. Which one do you want to use?\n\n")
             found.enumerated().forEach { i, p in
-                BTTLog.info("\(i + 1). \(URL(fileURLWithPath: p).lastPathComponent) (\(p))")
+                let name = URL(fileURLWithPath: p).deletingPathExtension().lastPathComponent
+                BTTLog.prompt("  \(i + 1). \(name).xcodeproj\n")
             }
-            BTTLog.info("\nEnter the number: ")
+            BTTLog.prompt("\nEnter the number: ")
 
             if let input = readLine()?.trimmingCharacters(in: .whitespaces),
                let idx   = Int(input),

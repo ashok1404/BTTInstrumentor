@@ -154,6 +154,12 @@ final class BTTCommand {
         for file in files {
             guard !injector.isIgnored(file: file) else { continue }
 
+            if injector.hasParseErrors(file: file) {
+                let name = URL(fileURLWithPath: file).lastPathComponent
+                BTTLog.warn("  ✗ \(name) skipped — file has syntax errors, fix and rebuild to instrument")
+                continue
+            }
+
             let isModified = isFileModifiedSinceLastInjection(file)
             let isInjected = injector.isInjected(file: file)
 
